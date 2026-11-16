@@ -6,7 +6,9 @@ on:
 
 jobs:
   engine:
-    runs-on: ubuntu-latest
+    # ffmpeg-next 6.1 bindgen includes libavcodec/avfft.h, removed in FFmpeg 7.
+    # ubuntu-latest has moved past that header; 24.04 still ships FFmpeg 6.1.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -25,7 +27,7 @@ jobs:
           ./engine/target/release/pixelpipe-engine --self-test
 
   ui:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
