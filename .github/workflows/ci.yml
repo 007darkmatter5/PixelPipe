@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  engine:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install native libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config clang libclang-dev \
+            libavcodec-dev libavformat-dev libavutil-dev \
+            libswscale-dev libswresample-dev libopus-dev unzip curl
+      - name: Test and build the engine
+        run: cargo test --release --manifest-path engine/Cargo.toml
+      - name: Run the NES core against the bundled homebrew ROM
+        run: |
+          bash scripts/fetch-cores.sh fceumm
+          ./engine/target/release/pixelpipe-engine --self-test
+
+  ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+      - name: Build the Blazor UI
+        run: dotnet build ui/PixelPipe.Web/PixelPipe.Web.csproj -c Release --nologo

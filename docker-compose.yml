@@ -1,0 +1,23 @@
+services:
+  pixelpipe:
+    build: .
+    image: pixelpipe:local
+    ports:
+      - "8080:8080"
+      - "9090:9090"
+      - "50000-50100:50000-50100/udp"
+    environment:
+      # LAN address of this Docker host. WebRTC candidates must be reachable
+      # by the browser. Leave empty only when the browser is on the same host
+      # network namespace (network_mode: host).
+      PIXELPIPE_ADVERTISE_IP: ${PIXELPIPE_ADVERTISE_IP:-}
+      PIXELPIPE_WEBRTC_PORT_MIN: "50000"
+      PIXELPIPE_WEBRTC_PORT_MAX: "50100"
+    volumes:
+      # Owner's library lives on a UniFi UNAS Pro share. Mount that path here.
+      - ${PIXELPIPE_ROMS:-./roms}:/roms:ro
+      - pixelpipe-data:/data
+    restart: unless-stopped
+
+volumes:
+  pixelpipe-data:

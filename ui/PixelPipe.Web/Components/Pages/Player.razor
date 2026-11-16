@@ -1,0 +1,81 @@
+@page "/play/{*Id}"
+@inject IJSRuntime JS
+@inject LibraryService Library
+@inject NavigationManager Nav
+
+<PageTitle>@(_game?.Title ?? "Play") · PixelPipe</PageTitle>
+
+@if (_game is null)
+{
+    <MudAlert Severity="Severity.Warning">That ROM is not in the library.</MudAlert>
+}
+else
+{
+    <div class="player-layout">
+        <div>
+            <div class="stage" id="pp-stage" tabindex="0">
+                <video id="pp-video" autoplay playsinline></video>
+                <div id="pp-hud" class="hud">Click Play. Arrows move, Z is B, X is A, Enter is Start, Shift is Select.</div>
+            </div>
+        </div>
+        <aside class="player-side">
+            <MudText Typo="Typo.h5">@_game.Title</MudText>
+            <MudText Typo="Typo.body2" Class="mud-text-secondary">@_game.System · @_game.Crc32</MudText>
+            <div class="row">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="Start">Play</MudButton>
+                <MudButton Variant="Variant.Outlined" OnClick="Save">Save</MudButton>
+                <MudButton Variant="Variant.Outlined" OnClick="Load">Load</MudButton>
+            </div>
+            <MudText Typo="Typo.caption">
+                Keyboard and one browser gamepad are mapped to the libretro joypad.
+                Save states land in the engine data directory.
+            </MudText>
+            <MudButton Href="@_game.DetailHref" Variant="Variant.Text" Class="mt-2">Details</MudButton>
+        </aside>
+    </div>
+}
+
+@code {
+    [Parameter] public string Id { get; set; } = "";
+    private GameEntry? _game;
+    private bool _freeze;
+
+    protected override void OnParametersSet() => _game = Library.Find(Uri.UnescapeDataString(Id));
+
+    protected override bool ShouldRender() => !_freeze;
+
+    private string EngineBase()
+    {
+        if (Library.PublicEngineUrl is { } configured)
+        {
+            return configured;
+        }
+
+        var uri = new Uri(Nav.BaseUri);
+        var port = uri.Port is 80 or 443 ? "" : ":9090";
+        if (uri.Port is not (80 or 443))
+        {
+            port = ":9090";
+        }
+        return $"{uri.Scheme}//{uri.Host}{port}";
+    }
+
+    private async Task Start()
+    {
+        if (_game is null || _freeze)
+        {
+            return;
+        }
+
+        _freeze = true;
+        await JS.InvokeVoidAsync("pixelpipePlayer.start", new
+        {
+            rom = _game.RelativePath,
+            engine = EngineBase(),
+        });
+    }
+
+    private async Task Save() => await JS.InvokeVoidAsync("pixelpipePlayer.saveState");
+
+    private async Task Load() => await JS.InvokeVoidAsync("pixelpipePlayer.loadState");
+}

@@ -1,0 +1,12 @@
+{
+  "games": [
+    {
+      "file": "homebrew/pixelpipe-test.nes",
+      "title": "PixelPipe Test",
+      "developer": "PixelPipe",
+      "year": 2026,
+      "description": "Original homebrew written for PixelPipe (CC0). A yellow cursor moves 3 pixels per frame with the D-pad. A flashes the field red and recolors the cursor. Holding a direction raises the square-wave pitch. The background pulses so a live frame is obvious.",
+      "players": 1
+    }
+  ]
+}

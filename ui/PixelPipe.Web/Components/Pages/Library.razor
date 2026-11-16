@@ -1,0 +1,86 @@
+@page "/"
+@inject LibraryService Catalog
+
+<PageTitle>Library · PixelPipe</PageTitle>
+
+<div class="page-head">
+    <div>
+        <MudText Typo="Typo.h4">Library</MudText>
+        <MudText Typo="Typo.body2" Class="mud-text-secondary">@snapshot.Games.Count games in @snapshot.RomsPath</MudText>
+    </div>
+    <MudButton Variant="Variant.Outlined" OnClick="Refresh">Rescan</MudButton>
+</div>
+
+<div class="filters">
+    @foreach (var filter in Filters)
+    {
+        <MudButton Variant="@(filter.Id == _system ? Variant.Filled : Variant.Outlined)"
+                   Color="Color.Primary"
+                   Size="Size.Small"
+                   OnClick="@(() => _system = filter.Id)">
+            @filter.Label
+        </MudButton>
+    }
+</div>
+
+@if (!visible.Any())
+{
+    <MudAlert Severity="Severity.Info" Class="mt-6">
+        No @_system ROMs in this folder yet. Drop .nes, .sfc, or .md files into the library and rescan.
+        The included homebrew is <strong>PixelPipe Test</strong>.
+    </MudAlert>
+}
+else
+{
+    <div class="shelf">
+        @foreach (var game in visible)
+        {
+            <article class="poster">
+                <a href="@game.DetailHref">
+                    <img src="@game.BoxArtUrl" alt="@game.Title box art" />
+                </a>
+                <div class="poster-meta">
+                    <MudText Typo="Typo.subtitle1" Class="title">@game.Title</MudText>
+                    <MudChip T="string" Size="Size.Small" Color="@ChipColor(game.SystemId)">@game.System</MudChip>
+                    <MudButton Href="@game.PlayHref" Variant="Variant.Filled" Color="Color.Primary" FullWidth="true" Class="mt-2">Play</MudButton>
+                </div>
+            </article>
+        }
+    </div>
+}
+
+@code {
+    private LibrarySnapshot snapshot = new()
+    {
+        RomsPath = "",
+        Games = Array.Empty<GameEntry>(),
+        ScannedAt = DateTimeOffset.MinValue,
+    };
+    private string _system = "all";
+
+    private static readonly (string Id, string Label)[] Filters =
+    [
+        ("all", "All"),
+        ("nes", "NES"),
+        ("snes", "SNES"),
+        ("genesis", "Genesis"),
+    ];
+
+    private IEnumerable<GameEntry> visible =>
+        snapshot.Games.Where(game => _system == "all" || game.SystemId == _system);
+
+    protected override void OnInitialized() => snapshot = Catalog.Get();
+
+    private void Refresh()
+    {
+        Catalog.Invalidate();
+        snapshot = Catalog.Get();
+    }
+
+    private static Color ChipColor(string system) => system switch
+    {
+        "snes" => Color.Secondary,
+        "genesis" => Color.Info,
+        _ => Color.Error,
+    };
+}

@@ -1,0 +1,29 @@
+# Rust
+engine/target/
+**/*.rs.bk
+
+# .NET
+**/bin/
+**/obj/
+**/*.user
+**/.vs/
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Libretro cores are downloaded (scripts/fetch-cores.sh), not vendored.
+cores/*.so
+cores/*.dll
+cores/*.dylib
+cores/*.zip
+
+# Runtime library data (save states, SRAM, system dir)
+data/
+
+# Local env
+.env
+*.log
+
+# OS
+.DS_Store
+Thumbs.db

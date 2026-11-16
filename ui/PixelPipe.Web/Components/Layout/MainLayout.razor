@@ -1,0 +1,38 @@
+@inherits LayoutComponentBase
+
+<MudThemeProvider Theme="_theme" IsDarkMode="true" />
+<MudPopoverProvider />
+<MudDialogProvider />
+<MudSnackbarProvider />
+
+<MudLayout>
+    <MudAppBar Elevation="0" Class="appbar">
+        <MudText Typo="Typo.h6" Class="brand">PixelPipe</MudText>
+        <MudText Typo="Typo.body2" Class="ml-3 tagline">Plex for retro games</MudText>
+        <MudSpacer />
+        <MudButton Href="/" Variant="Variant.Text" Color="Color.Inherit">Library</MudButton>
+        <MudButton Href="/settings" Variant="Variant.Text" Color="Color.Inherit">Settings</MudButton>
+    </MudAppBar>
+    <MudMainContent Class="main-content">
+        @Body
+    </MudMainContent>
+</MudLayout>
+
+@code {
+    private readonly MudTheme _theme = new()
+    {
+        PaletteLight = new PaletteLight(),
+        PaletteDark = new PaletteDark
+        {
+            Primary = "#7C5CFF",
+            Secondary = "#FFB703",
+            Background = "#0E0E12",
+            Surface = "#17171F",
+            AppbarBackground = "#12121A",
+            AppbarText = "#F4F4F8",
+            TextPrimary = "#F4F4F8",
+            TextSecondary = "#B7B7C8",
+            DrawerBackground = "#12121A",
+        }
+    };
+}

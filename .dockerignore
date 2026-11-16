@@ -1,0 +1,7 @@
+.git
+engine/target
+ui/**/bin
+ui/**/obj
+data
+cores/*.so
+**/*.user
