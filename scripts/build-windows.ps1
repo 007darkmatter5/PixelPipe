@@ -2,6 +2,13 @@
 # Requires: Rust (MSVC), .NET 8 SDK, CMake, LLVM (libclang), and optionally Inno Setup 6.
 # FFmpeg 6.1.1 shared binaries are downloaded on first run (ffmpeg-next cannot parse FFmpeg 7+).
 $ErrorActionPreference = 'Stop'
+# PowerShell does not fail the script when cargo or cmake returns non-zero.
+if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+    $PSNativeCommandUseErrorActionPreference = $true
+}
+# Opus ships a CMakeLists that asks for CMake < 3.5. Current GitHub runners
+# ship CMake 4, which refuses that unless this floor is set.
+$env:CMAKE_POLICY_VERSION_MINIMUM = '3.5'
 $Root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $Cache = Join-Path $Root '.cache'
 New-Item -ItemType Directory -Force -Path $Cache | Out-Null
@@ -42,6 +49,7 @@ Write-Host "LIBCLANG_PATH=$env:LIBCLANG_PATH"
 Push-Location $Root
 try {
     cargo build --release --locked --manifest-path engine/Cargo.toml
+    if ($LASTEXITCODE -ne 0) { throw "cargo build failed ($LASTEXITCODE)" }
     & (Join-Path $Root 'scripts\fetch-cores.ps1')
 
     $stage = Join-Path $Root 'dist\windows'
@@ -49,6 +57,7 @@ try {
         Remove-Item -Recurse -Force $stage
     }
     dotnet publish ui/PixelPipe.Web/PixelPipe.Web.csproj -c Release -r win-x64 --self-contained true -p:PublishReadyToRun=false -o $stage
+    if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed ($LASTEXITCODE)" }
     Copy-Item (Join-Path $Root 'engine\target\release\pixelpipe-engine.exe') $stage
     Copy-Item (Join-Path $ffmpeg 'bin\*.dll') $stage
     $coresDest = Join-Path $stage 'cores'
