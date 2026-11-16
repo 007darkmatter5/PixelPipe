@@ -5,7 +5,23 @@
       "title": "PixelPipe Test",
       "developer": "PixelPipe",
       "year": 2026,
-      "description": "Original homebrew written for PixelPipe (CC0). A yellow cursor moves 3 pixels per frame with the D-pad. A flashes the field red and recolors the cursor. Holding a direction raises the square-wave pitch. The background pulses so a live frame is obvious.",
+      "description": "Original NES homebrew written for PixelPipe (CC0). A yellow cursor moves 3 pixels per frame with the D-pad. A flashes the field red and recolors the cursor. Holding a direction raises the square-wave pitch. The background pulses so a live frame is obvious.",
+      "players": 1
+    },
+    {
+      "file": "homebrew/pixelpipe-snes-test.sfc",
+      "title": "PixelPipe SNES Test",
+      "developer": "PixelPipe",
+      "year": 2026,
+      "description": "Original SNES LoROM written for PixelPipe (CC0). A blue field and a yellow sprite. Right moves the sprite two pixels per frame. Snes9x supplies the audio samples.",
+      "players": 1
+    },
+    {
+      "file": "homebrew/pixelpipe-genesis-test.gen",
+      "title": "PixelPipe Genesis Test",
+      "developer": "PixelPipe",
+      "year": 2026,
+      "description": "Original Genesis ROM written for PixelPipe (CC0). A blue field and a yellow sprite. Right moves the sprite three pixels per frame.",
       "players": 1
     }
   ]

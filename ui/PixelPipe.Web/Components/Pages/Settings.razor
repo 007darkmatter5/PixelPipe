@@ -30,6 +30,10 @@
                 <MudAlert Severity="Severity.Success" Dense="true">
                     Online · @_health.Version · @(_health.EncoderLabel ?? _health.Encoder ?? "encoder unknown")
                 </MudAlert>
+                @if (!string.IsNullOrWhiteSpace(_health.EncoderDetail))
+                {
+                    <MudText Typo="Typo.body2">@_health.EncoderDetail</MudText>
+                }
             }
             <MudText Typo="Typo.caption">Signaling @Library.EngineUrl. The browser uses @BrowserEngine().</MudText>
         </MudPaper>

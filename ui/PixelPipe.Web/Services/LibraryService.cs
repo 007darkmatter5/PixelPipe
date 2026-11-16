@@ -23,7 +23,8 @@ public sealed class LibraryService
         get
         {
             var configured = _config["PixelPipe:RomsPath"] ?? "roms";
-            if (Path.IsPathRooted(configured) && Directory.Exists(configured))
+            // Keep UNC and other absolute paths even when the share is briefly unreachable.
+            if (Path.IsPathRooted(configured) || configured.StartsWith(@"\\", StringComparison.Ordinal))
             {
                 return configured;
             }

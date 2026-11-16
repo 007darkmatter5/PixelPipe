@@ -33,11 +33,25 @@ impl System {
         }
     }
 
+    /// Name shown when no file has been found yet.
     pub fn core_file(self) -> &'static str {
+        let names = self.core_filenames();
+        if cfg!(windows) {
+            names[0]
+        } else {
+            names[1]
+        }
+    }
+
+    /// Native name first (`dll` on Windows, `so` on Unix), then the other.
+    pub fn core_filenames(self) -> [&'static str; 2] {
         match self {
-            System::Nes => "fceumm_libretro.so",
-            System::Snes => "snes9x_libretro.so",
-            System::Genesis => "genesis_plus_gx_libretro.so",
+            System::Nes => ["fceumm_libretro.dll", "fceumm_libretro.so"],
+            System::Snes => ["snes9x_libretro.dll", "snes9x_libretro.so"],
+            System::Genesis => [
+                "genesis_plus_gx_libretro.dll",
+                "genesis_plus_gx_libretro.so",
+            ],
         }
     }
 
@@ -276,6 +290,18 @@ mod tests {
             .expect("listed");
         assert_eq!(game.system, System::Nes);
         assert_eq!(game.title, "PixelPipe Test");
+        let snes = games
+            .iter()
+            .find(|g| g.file.ends_with("pixelpipe-snes-test.sfc"))
+            .expect("snes");
+        assert_eq!(snes.system, System::Snes);
+        assert_eq!(snes.title, "PixelPipe SNES Test");
+        let genesis = games
+            .iter()
+            .find(|g| g.file.ends_with("pixelpipe-genesis-test.gen"))
+            .expect("genesis");
+        assert_eq!(genesis.system, System::Genesis);
+        assert_eq!(genesis.title, "PixelPipe Genesis Test");
         assert!(games.iter().all(|g| !g.file.ends_with("README.md")));
         assert!(game.rom_crc32.is_some());
         assert_ne!(game.crc32, game.rom_crc32.clone().unwrap());

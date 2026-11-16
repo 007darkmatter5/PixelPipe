@@ -8,6 +8,8 @@ pub mod library;
 pub mod libretro;
 pub mod selftest;
 pub mod server;
+#[cfg(windows)]
+pub mod service;
 pub mod session;
 
 pub use config::Config;

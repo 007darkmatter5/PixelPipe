@@ -73,6 +73,8 @@ pub struct ProbeResult {
 pub struct EncoderReport {
     pub selected: Option<EncoderKind>,
     pub selected_label: Option<String>,
+    /// Profile name and open size for the encoder that was selected.
+    pub selected_detail: Option<String>,
     pub probes: Vec<ProbeResult>,
 }
 
@@ -92,10 +94,53 @@ pub struct H264Encoder {
     height: u32,
     pts: i64,
     force_idr: bool,
+    profile: &'static str,
 }
 
 impl H264Encoder {
     pub fn open(kind: EncoderKind, width: u32, height: u32, fps: f64) -> anyhow::Result<Self> {
+        let mut failures = Vec::new();
+        for (profile, options) in option_sets(kind) {
+            match Self::open_with(kind, width, height, fps, profile, &options) {
+                Ok(encoder) => {
+                    tracing::info!(
+                        encoder = kind.ffmpeg_name(),
+                        profile,
+                        width = encoder.width,
+                        height = encoder.height,
+                        "opened H.264 encoder"
+                    );
+                    return Ok(encoder);
+                }
+                Err(err) => {
+                    tracing::debug!(
+                        encoder = kind.ffmpeg_name(),
+                        profile,
+                        %err,
+                        "encoder profile failed"
+                    );
+                    failures.push(format!("{profile}: {err:#}"));
+                }
+            }
+        }
+        Err(anyhow::anyhow!(
+            "{}",
+            if failures.is_empty() {
+                "no encoder profiles".to_string()
+            } else {
+                failures.join(" | ")
+            }
+        ))
+    }
+
+    fn open_with(
+        kind: EncoderKind,
+        width: u32,
+        height: u32,
+        fps: f64,
+        profile: &'static str,
+        options: &[(&str, &str)],
+    ) -> anyhow::Result<Self> {
         ensure_ffmpeg();
         let width = width.max(2) & !1;
         let height = height.max(2) & !1;
@@ -131,7 +176,7 @@ impl H264Encoder {
             }
         }
         let mut opts = ffmpeg::Dictionary::new();
-        for (key, value) in private_options(kind) {
+        for (key, value) in options {
             opts.set(key, value);
         }
         let encoder = video
@@ -157,7 +202,12 @@ impl H264Encoder {
             height,
             pts: 0,
             force_idr: true,
+            profile,
         })
+    }
+
+    pub fn profile(&self) -> &'static str {
+        self.profile
     }
 
     pub fn open_best(width: u32, height: u32, fps: f64) -> anyhow::Result<Self> {
@@ -251,7 +301,12 @@ fn probe_at(width: u32, height: u32, fps: f64) -> EncoderReport {
         }
         match H264Encoder::open(*kind, width, height, fps) {
             Ok(enc) => {
-                let detail = format!("opened {}x{} @ {fps} fps", enc.width, enc.height);
+                let detail = format!(
+                    "{} · opened {}x{} @ {fps:.0} fps",
+                    enc.profile(),
+                    enc.width,
+                    enc.height
+                );
                 drop(enc);
                 if selected.is_none() {
                     selected = Some(*kind);
@@ -276,26 +331,61 @@ fn probe_at(width: u32, height: u32, fps: f64) -> EncoderReport {
         }
     }
     let selected_label = selected.map(|k| k.label().to_string());
+    let selected_detail = selected.and_then(|kind| {
+        probes
+            .iter()
+            .find(|probe| probe.kind == kind && probe.available)
+            .map(|probe| probe.detail.clone())
+    });
     EncoderReport {
         selected,
         selected_label,
+        selected_detail,
         probes,
+    }
+}
+
+/// Profiles tried in order. Newer NVENC drivers accept `p1` + `ull`. Older
+/// drivers still accept `llhp` or `fast`. The last profile sets no private
+/// options, so a driver that rejects every named option can still open.
+fn option_sets(kind: EncoderKind) -> Vec<(&'static str, Vec<(&'static str, &'static str)>)> {
+    match kind {
+        EncoderKind::Nvenc => vec![
+            (
+                "p1-ull",
+                vec![
+                    ("preset", "p1"),
+                    ("tune", "ull"),
+                    ("zerolatency", "1"),
+                    ("delay", "0"),
+                    ("rc", "cbr"),
+                    ("profile", "baseline"),
+                    ("forced-idr", "1"),
+                    ("g", "15"),
+                    ("bf", "0"),
+                ],
+            ),
+            (
+                "llhp",
+                vec![
+                    ("preset", "llhp"),
+                    ("rc", "cbr"),
+                    ("profile", "baseline"),
+                    ("delay", "0"),
+                    ("g", "15"),
+                    ("bf", "0"),
+                ],
+            ),
+            ("fast", vec![("preset", "fast"), ("bf", "0"), ("g", "15")]),
+            ("defaults", vec![]),
+        ],
+        other => vec![("default", private_options(other))],
     }
 }
 
 fn private_options(kind: EncoderKind) -> Vec<(&'static str, &'static str)> {
     match kind {
-        EncoderKind::Nvenc => vec![
-            ("preset", "p1"),
-            ("tune", "ull"),
-            ("zerolatency", "1"),
-            ("delay", "0"),
-            ("rc", "cbr"),
-            ("profile", "baseline"),
-            ("forced-idr", "1"),
-            ("g", "15"),
-            ("bf", "0"),
-        ],
+        EncoderKind::Nvenc => Vec::new(),
         EncoderKind::Qsv => vec![
             ("preset", "veryfast"),
             ("async_depth", "1"),
@@ -544,6 +634,18 @@ mod tests {
     }
 
     #[test]
+    fn nvenc_tries_newer_presets_then_an_empty_option_set() {
+        let sets = option_sets(EncoderKind::Nvenc);
+        assert!(sets.len() >= 4);
+        assert_eq!(sets[0].0, "p1-ull");
+        assert!(sets[0].1.iter().any(|(k, v)| *k == "preset" && *v == "p1"));
+        assert_eq!(sets[1].0, "llhp");
+        assert!(sets.last().unwrap().1.is_empty());
+        assert_eq!(option_sets(EncoderKind::X264).len(), 1);
+        assert_eq!(option_sets(EncoderKind::X264)[0].0, "default");
+    }
+
+    #[test]
     fn annex_b_and_avcc_round_trip_helpers() {
         let raw = vec![0x65, 0x88, 0x84, 0x00, 0x10];
         let annex = normalize_annex_b(&raw);
@@ -563,6 +665,7 @@ mod tests {
     fn x264_roundtrip_red_frame() {
         let mut enc = H264Encoder::open(EncoderKind::X264, 256, 240, 60.0).expect("open x264");
         assert_eq!(enc.kind(), EncoderKind::X264);
+        assert_eq!(enc.profile(), "default");
         let mut bgra = vec![0u8; 256 * 240 * 4];
         for px in bgra.chunks_exact_mut(4) {
             px[0] = 20;

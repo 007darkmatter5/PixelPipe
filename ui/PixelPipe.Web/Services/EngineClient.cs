@@ -55,4 +55,7 @@ public sealed class EngineHealth
 
     [JsonPropertyName("encoder_label")]
     public string? EncoderLabel { get; set; }
+
+    [JsonPropertyName("encoder_detail")]
+    public string? EncoderDetail { get; set; }
 }

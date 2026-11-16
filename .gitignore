@@ -20,6 +20,11 @@ cores/*.zip
 # Runtime library data (save states, SRAM, system dir)
 data/
 
+# Windows installer staging (FFmpeg zip, published UI, setup exe)
+dist/
+.cache/
+__pycache__/
+
 # Local env
 .env
 *.log

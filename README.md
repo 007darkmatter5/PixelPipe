@@ -20,8 +20,8 @@ engine (Rust)
 
 - **UI** (`ui/PixelPipe.Web`): Blazor Server and MudBlazor. The library page scans a folder, shows box art, and opens a player page.
 - **Engine** (`engine/`): loads a libretro core with `dlopen`, runs it headless, takes frames from the video callback and PCM from the audio callback, encodes H.264, encodes Opus, and sends both on a WebRTC peer connection. Browser input arrives on an unreliable data channel and is fed to `retro_input_state`.
-- **Encoder order**, probed by actually opening the codec at startup: NVIDIA NVENC (`h264_nvenc`), Intel Quick Sync (`h264_qsv`), VAAPI (`h264_vaapi`), AMD AMF (`h264_amf`), then libx264. Machines without a GPU use libx264. The software path is tuned for latency (`ultrafast`, `zerolatency`, no B-frames, intra refresh off, headers repeated on every IDR).
-- **Packaging**: one Docker image runs both processes. The ROM library is a volume. Images are built for `linux/amd64` and `linux/arm64`; cores are downloaded from the libretro buildbot for the target architecture.
+- **Encoder order**, probed by actually opening the codec at startup: NVIDIA NVENC (`h264_nvenc`), Intel Quick Sync (`h264_qsv`), VAAPI (`h264_vaapi`), AMD AMF (`h264_amf`), then libx264. Machines without a GPU use libx264. The software path is tuned for latency (`ultrafast`, `zerolatency`, no B-frames, intra refresh off, headers repeated on every IDR). NVENC tries several driver profiles (`p1`/`ull`, then `llhp`, then `fast`, then no private options). The profile that opened is logged and shown on the settings page.
+- **Packaging**: a Docker image for Unraid/NAS (`linux/amd64` and `linux/arm64`) and a native Windows x64 installer. Cores are downloaded from the libretro buildbot, not compiled into the engine. The ROM library is a folder, a Docker volume, or a UNC path such as `\\unas-pro\roms`.
 
 ```mermaid
 flowchart LR
@@ -43,19 +43,42 @@ flowchart LR
   Engine -->|input callback| Core
 ```
 
-## Milestone 1
+## What works
 
-Working in this tree:
-
-- Repository layout, `.gitignore`, GitHub Actions build of the engine and the UI, Dockerfile and Compose.
-- FCEUmm loads the bundled CC0 NES ROM headless. A self-test checks that the picture is not black, that audio is produced, that holding Right moves the on-screen cursor, that a frame round-trips through libx264, and that save states serialize.
-- Encoder probe prefers NVENC and falls through to libx264 when the GPU encoder cannot be opened.
+- NES (FCEUmm), SNES (Snes9x), and Genesis (Genesis Plus GX) each play an original CC0 ROM. A self-test checks that the picture is not black, that audio samples are produced, that holding Right moves the on-screen cursor, that a frame round-trips through the selected H.264 encoder, and that a save state serializes.
+- Encoder probe prefers NVENC and falls through to libx264 when the GPU encoder cannot be opened. On this development VM, `h264_nvenc` fails with a missing `libcuda.so.1` and libx264 is selected. That fallback is what the settings page and `pixelpipe.log` should show when no NVIDIA driver is present.
 - WebRTC video and audio to the player page, with keyboard and one Gamepad API controller mapped onto the libretro joypad. Save and load of one state slot.
-- Blazor library, game detail, settings (encoder probe and core inventory), and player.
+- Blazor library, game detail, settings (the encoder that opened, the full probe, and the core inventory), and player.
+- Docker Compose for a NAS, plus a Windows x64 installer built in CI. The installer writes `%ProgramData%\PixelPipe\config.json`, can open the firewall, and can either start PixelPipe at login or register a Windows service.
 
-Not in this milestone: SNES and Genesis are wired (extension → core) and the cores load, but they are not exercised with a ROM here. No second player, no Tailscale remote play, no profiles, no cloud saves, no No-Intro DAT matching. VAAPI and Quick Sync are probed by opening the encoder; they need a hardware pixel format this build does not upload yet, so a GPU-only machine still falls through to libx264 when `h264_vaapi` or `h264_qsv` refuses `yuv420p`. One session at a time. `.md` files that are plain text (such as this folder's notes) are not treated as Genesis ROMs.
+Not in this tree yet: a second session, Tailscale remote play, profiles, cloud saves, No-Intro DAT matching. VAAPI and Quick Sync are probed by opening the encoder; they need a hardware pixel format this build does not upload yet, so they fall through to libx264 when they refuse `yuv420p`. One session at a time. `.md` files that are plain text are not treated as Genesis ROMs.
+
+### Untested on real hardware
+
+This environment has no NVIDIA GPU and is not Windows. The following are implemented and covered by the code path, and still need a pass on the Windows 11 desktop:
+
+- `h264_nvenc` actually encoding a frame on the NVIDIA driver (Windows) or via the NVIDIA container toolkit (Linux). The probe tries four option sets so an older driver can still open. Until that probe says NVENC is available, frames are libx264.
+- The Inno Setup installer, the service control manager, the firewall rules, and a UNC library such as `\\unas-pro\roms`. CI compiles the installer on `windows-latest` and runs the three homebrew ROMs there; that is not the same machine as the owner's desktop.
 
 ## Run it
+
+### Windows 11 (native, no Docker)
+
+1. Open the GitHub Actions run for this branch and download the **PixelPipe-Setup** artifact (`PixelPipe-Setup.exe`). Building it yourself is `scripts\build-windows.ps1` (Rust MSVC toolchain, .NET 8 SDK, CMake, LLVM, Inno Setup 6). The script downloads FFmpeg 6.1.1 shared builds, because the engine's FFmpeg bindings do not parse FFmpeg 7 or newer.
+2. Run the installer. Leave **Start PixelPipe when you sign in** selected if the ROMs are on `\\unas-pro\roms`. That starts the engine in the background when you sign in (no console window). LocalSystem, which is what the Windows service uses, usually cannot see a passworded share. Choose the service only for a local disk, or later point it at your account:
+
+   ```bat
+   sc config PixelPipe obj= ".\YourUser" password= "YourPassword"
+   sc stop PixelPipe
+   sc start PixelPipe
+   ```
+
+3. On the ROM folder page, enter `\\unas-pro\roms` (or leave it blank to use the three demo ROMs installed under `demo-roms`).
+4. Leave the firewall task selected. It allows TCP 8080, TCP 9090, and UDP 50000–50100.
+5. Open `http://127.0.0.1:8080` on the desktop, or `http://<desktop-lan-ip>:8080` from another device. Play **PixelPipe Test**, **PixelPipe SNES Test**, and **PixelPipe Genesis Test**. Click the video. Right (or the D-pad) moves the yellow cursor. Z is B, X is A, Enter is Start, Shift is Select.
+6. Confirm the encoder on the settings page. A working GPU shows **NVIDIA NVENC** and a profile such as `p1-ull`, `llhp`, `fast`, or `defaults`. The same line is in `%ProgramData%\PixelPipe\pixelpipe.log` as `opened H.264 encoder` with `encoder=h264_nvenc`. `nvidia-smi` should already succeed before you expect NVENC to. If the row says skipped, the detail text is the FFmpeg error; a current Game Ready or Studio driver is what supplies `nvcuda.dll` and `nvEncodeAPI64.dll`, and those DLLs are not part of the installer.
+
+Saves go to `%ProgramData%\PixelPipe\saves`, not back onto the NAS. Edit `%ProgramData%\PixelPipe\config.json` to change the ROM folder without reinstalling. If a browser on another device connects the page but not the video, set `"advertise_ip"` in that file to the desktop's LAN address and restart PixelPipe.
 
 ### Docker Compose
 
@@ -69,7 +92,15 @@ Open `http://<host>:8080`. UDP `50000-50100` is published for WebRTC. Set `PIXEL
 
 The image contains the UI on port 8080 and the engine on port 9090. The ROM volume is mounted read-only at `/roms`. Save states and SRAM go to the `pixelpipe-data` volume, not back onto the NAS share.
 
-### Local, without Docker
+On a Linux host with an NVIDIA GPU and the [NVIDIA container toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.nvidia.yml up --build
+```
+
+The toolkit mounts the host driver's `libcuda` and `libnvidia-encode` into the container. The image does not contain those libraries. Settings should then report NVENC the same way as on Windows. This overlay has not been run on a GPU in development.
+
+### Local Linux, without Docker
 
 ```bash
 # Ubuntu/Debian build dependencies
@@ -78,18 +109,18 @@ sudo apt-get install -y pkg-config clang libclang-dev \
 # .NET 8 SDK on PATH
 
 bash scripts/fetch-cores.sh
-python3 scripts/build-test-rom.py   # already committed; rerun if you change the ROM
-cargo build --manifest-path engine/Cargo.toml
 cargo test --manifest-path engine/Cargo.toml
 ./engine/target/debug/pixelpipe-engine --self-test
+./engine/target/debug/pixelpipe-engine --self-test \
+  --core cores/snes9x_libretro.so --rom roms/homebrew/pixelpipe-snes-test.sfc
+./engine/target/debug/pixelpipe-engine --self-test \
+  --core cores/genesis_plus_gx_libretro.so --rom roms/homebrew/pixelpipe-genesis-test.gen
 ./scripts/dev.sh
 ```
 
 `scripts/dev.sh` starts the engine on `:9090` and the Blazor app on `:8080`.
 
-Play **PixelPipe Test**. Click the video, then the arrow keys. Z is B, X is A, Enter is Start, Shift is Select. A gamepad's face buttons and D-pad follow the standard mapping. The HUD prints encode time, data-channel RTT, jitter-buffer delay, decode time, and a sum of those as an estimated glass-to-glass latency. That sum does not include display refresh.
-
-There is also a same-origin debug player at `http://127.0.0.1:9090/player`.
+The HUD prints encode time, data-channel RTT, jitter-buffer delay, decode time, and a sum of those as an estimated glass-to-glass latency. That sum does not include display refresh. There is also a same-origin debug player at `http://127.0.0.1:9090/player`.
 
 ## Library
 
@@ -107,12 +138,12 @@ Cores are loaded at runtime. They are not compiled into the engine. Fetch them w
 
 PixelPipe's own engine and UI do not add a separate license in this milestone. Do not ship Snes9x or Genesis Plus GX in a commercial product.
 
-The only ROM in the repository is `roms/homebrew/pixelpipe-test.nes` (CC0, source is `scripts/build-test-rom.py`).
+The ROMs in the repository are the three CC0 programs under `roms/homebrew/`. Their sources are `scripts/build-test-rom.py`, `scripts/build-snes-test-rom.py`, and `scripts/build-genesis-test-rom.py`.
 
 ## Roadmap
 
-1. Finish hardware encode on VAAPI (hardware frames) and confirm NVENC on the owner's NVIDIA host. Keep the same encoder interface.
-2. Exercise Snes9x and Genesis Plus GX with redistributable homebrew, including a real sample-rate resample check.
+1. Confirm NVENC on the owner's Windows 11 desktop (and, if useful, the Docker NVIDIA overlay) using the settings page and `pixelpipe.log`.
+2. Upload VAAPI and Quick Sync frames in a hardware pixel format so those encoders do not fall through to libx264.
 3. No-Intro / Redump DAT identification, richer metadata, and scraped box art with a local cache.
 4. More than one session, per-game core options, and hotkey save states.
 5. Remote play over Tailscale: STUN is already an env var (`PIXELPIPE_STUN`); relay and auth come after.
@@ -121,13 +152,16 @@ The only ROM in the repository is `roms/homebrew/pixelpipe-test.nes` (CC0, sourc
 ## Layout
 
 ```text
-engine/                 Rust crate (pixelpipe-engine)
-ui/PixelPipe.Web/       Blazor Server + MudBlazor
-roms/                   library mount, plus the CC0 test ROM
-cores/                  downloaded libretro cores (gitignored)
-scripts/fetch-cores.sh
-scripts/build-test-rom.py
+engine/                      Rust crate (pixelpipe-engine)
+ui/PixelPipe.Web/            Blazor Server + MudBlazor
+roms/homebrew/               three CC0 test ROMs
+cores/                       downloaded libretro cores (gitignored)
+scripts/fetch-cores.sh       Linux cores
+scripts/fetch-cores.ps1      Windows cores
+scripts/build-windows.ps1    native build + installer
 scripts/dev.sh
+installer/pixelpipe.iss      Inno Setup
 Dockerfile
 docker-compose.yml
+docker-compose.nvidia.yml
 ```
