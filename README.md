@@ -64,7 +64,7 @@ This environment has no NVIDIA GPU and is not Windows. The following are impleme
 
 ### Windows 11 (native, no Docker)
 
-1. Open the GitHub Actions run for this branch and download the **PixelPipe-Setup** artifact (`PixelPipe-Setup.exe`). Building it yourself is `scripts\build-windows.ps1` (Rust MSVC toolchain, .NET 8 SDK, CMake, LLVM, Inno Setup 6). The script downloads FFmpeg 6.1.1 shared builds, because the engine's FFmpeg bindings do not parse FFmpeg 7 or newer.
+1. Open the GitHub Actions run for this branch and download the **PixelPipe-Setup** artifact (`PixelPipe-Setup.exe`). Building it yourself is `scripts\build-windows.ps1` (Rust MSVC toolchain, .NET 8 SDK, CMake, LLVM, Inno Setup 6). The script downloads FFmpeg 6.1.1 shared builds, because the engine's FFmpeg bindings do not parse FFmpeg 7 or newer. It also sets `CMAKE_POLICY_VERSION_MINIMUM=3.5` so CMake 4 can still compile the bundled Opus sources.
 2. Run the installer. Leave **Start PixelPipe when you sign in** selected if the ROMs are on `\\unas-pro\roms`. That starts the engine in the background when you sign in (no console window). LocalSystem, which is what the Windows service uses, usually cannot see a passworded share. Choose the service only for a local disk, or later point it at your account:
 
    ```bat
