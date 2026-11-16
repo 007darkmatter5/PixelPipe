@@ -20,11 +20,12 @@ jobs:
             libavcodec-dev libavformat-dev libavutil-dev \
             libswscale-dev libswresample-dev libopus-dev unzip curl
       - name: Test and build the engine
-        run: cargo test --release --manifest-path engine/Cargo.toml
+        run: cargo test --release --locked --manifest-path engine/Cargo.toml
       - name: Run the NES core against the bundled homebrew ROM
         run: |
           bash scripts/fetch-cores.sh fceumm
-          ./engine/target/release/pixelpipe-engine --self-test
+          # cargo test does not always leave the final binary at target/release/.
+          cargo run --release --locked --manifest-path engine/Cargo.toml -- --self-test
 
   ui:
     runs-on: ubuntu-24.04
