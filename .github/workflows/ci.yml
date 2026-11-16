@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  engine:
+    # ffmpeg-next 6.1 bindgen includes libavcodec/avfft.h, removed in FFmpeg 7.
+    # ubuntu-latest has moved past that header; 24.04 still ships FFmpeg 6.1.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install native libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config clang libclang-dev \
+            libavcodec-dev libavformat-dev libavutil-dev \
+            libswscale-dev libswresample-dev libopus-dev unzip curl
+      - name: Test and build the engine
+        run: cargo test --release --locked --manifest-path engine/Cargo.toml
+      - name: Run the NES core against the bundled homebrew ROM
+        run: |
+          bash scripts/fetch-cores.sh fceumm
+          # cargo test does not always leave the final binary at target/release/.
+          cargo run --release --locked --manifest-path engine/Cargo.toml -- --self-test
+
+  ui:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+      - name: Build the Blazor UI
+        run: dotnet build ui/PixelPipe.Web/PixelPipe.Web.csproj -c Release --nologo

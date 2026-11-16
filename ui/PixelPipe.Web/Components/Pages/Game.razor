@@ -1,0 +1,48 @@
+@page "/game/{*Id}"
+@inject LibraryService Library
+
+<PageTitle>@(_game?.Title ?? "Game") · PixelPipe</PageTitle>
+
+@if (_game is null)
+{
+    <MudAlert Severity="Severity.Warning">That ROM is not in the library.</MudAlert>
+}
+else
+{
+    <div class="detail">
+        <img class="detail-art" src="@_game.BoxArtUrl" alt="@_game.Title box art" />
+        <div>
+            <MudChip T="string" Size="Size.Small" Color="Color.Primary">@_game.System</MudChip>
+            <MudText Typo="Typo.h3" Class="mt-2">@_game.Title</MudText>
+            <MudText Typo="Typo.body1" Class="mt-3">@(_game.Description ?? "No description yet. Add one in roms/library.json.")</MudText>
+            <dl class="facts">
+                <dt>File</dt><dd>@_game.RelativePath</dd>
+                <dt>File CRC32</dt><dd><code>@_game.Crc32</code></dd>
+                @if (_game.RomCrc32 is { } romCrc)
+                {
+                    <dt>ROM CRC32</dt><dd><code>@romCrc</code></dd>
+                }
+                @if (_game.Developer is { } developer)
+                {
+                    <dt>Developer</dt><dd>@developer</dd>
+                }
+                @if (_game.Year is { } year)
+                {
+                    <dt>Year</dt><dd>@year</dd>
+                }
+                <dt>Size</dt><dd>@((_game.Bytes / 1024.0).ToString("0.0")) KB</dd>
+            </dl>
+            <div class="row">
+                <MudButton Href="@_game.PlayHref" Variant="Variant.Filled" Color="Color.Primary" Size="Size.Large">Play</MudButton>
+                <MudButton Href="/" Variant="Variant.Text">Back to library</MudButton>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public string Id { get; set; } = "";
+    private GameEntry? _game;
+
+    protected override void OnParametersSet() => _game = Library.Find(Uri.UnescapeDataString(Id));
+}

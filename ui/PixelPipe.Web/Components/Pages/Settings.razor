@@ -1,0 +1,113 @@
+@page "/settings"
+@inject LibraryService Library
+@inject EngineClient Engine
+
+<PageTitle>Settings · PixelPipe</PageTitle>
+
+<MudText Typo="Typo.h4">Settings</MudText>
+<MudText Typo="Typo.body2" Class="mud-text-secondary mb-4">This host, this library, this encoder.</MudText>
+
+<MudGrid>
+    <MudItem xs="12" md="6">
+        <MudPaper Class="pa-4" Elevation="0">
+            <MudText Typo="Typo.h6">Library</MudText>
+            <MudText Typo="Typo.body2">@Library.RomsPath</MudText>
+            <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                Mount a folder or a UniFi UNAS share here. Identification is the filename plus CRC32.
+                Optional titles live in library.json. Box art is a PNG next to the ROM or under boxart/.
+            </MudText>
+        </MudPaper>
+    </MudItem>
+    <MudItem xs="12" md="6">
+        <MudPaper Class="pa-4" Elevation="0">
+            <MudText Typo="Typo.h6">Engine</MudText>
+            @if (_health is null)
+            {
+                <MudAlert Severity="Severity.Warning" Dense="true">Engine is not reachable at @Library.EngineUrl.</MudAlert>
+            }
+            else
+            {
+                <MudAlert Severity="Severity.Success" Dense="true">
+                    Online · @_health.Version · @(_health.EncoderLabel ?? _health.Encoder ?? "encoder unknown")
+                </MudAlert>
+            }
+            <MudText Typo="Typo.caption">Signaling @Library.EngineUrl. The browser uses @BrowserEngine().</MudText>
+        </MudPaper>
+    </MudItem>
+    <MudItem xs="12">
+        <MudPaper Class="pa-4" Elevation="0">
+            <MudText Typo="Typo.h6">Encoder probe</MudText>
+            <MudText Typo="Typo.body2" Class="mb-2">Order: NVIDIA NVENC, Intel Quick Sync, VAAPI, AMD AMF, libx264.</MudText>
+            @if (_encoders is null)
+            {
+                <MudText Typo="Typo.body2">Probe results appear when the engine is running.</MudText>
+            }
+            else
+            {
+                <MudSimpleTable Dense="true" Hover="true">
+                    <thead>
+                        <tr><th>Encoder</th><th>Status</th><th>Detail</th></tr>
+                    </thead>
+                    <tbody>
+                    @foreach (var probe in _encoders)
+                    {
+                        <tr>
+                            <td>@probe.GetProperty("label").GetString()</td>
+                            <td>@(probe.GetProperty("available").GetBoolean() ? "available" : "skipped")</td>
+                            <td>@probe.GetProperty("detail").GetString()</td>
+                        </tr>
+                    }
+                    </tbody>
+                </MudSimpleTable>
+            }
+        </MudPaper>
+    </MudItem>
+    <MudItem xs="12">
+        <MudPaper Class="pa-4" Elevation="0">
+            <MudText Typo="Typo.h6">Cores</MudText>
+            @if (_cores is null)
+            {
+                <MudText Typo="Typo.body2">Core inventory appears when the engine is running.</MudText>
+            }
+            else
+            {
+                <MudSimpleTable Dense="true">
+                    <thead><tr><th>System</th><th>File</th><th>Present</th></tr></thead>
+                    <tbody>
+                    @foreach (var core in _cores)
+                    {
+                        <tr>
+                            <td>@core.GetProperty("system").GetString()</td>
+                            <td><code>@core.GetProperty("file").GetString()</code></td>
+                            <td>@(core.GetProperty("present").GetBoolean() ? "yes" : "missing")</td>
+                        </tr>
+                    }
+                    </tbody>
+                </MudSimpleTable>
+            }
+        </MudPaper>
+    </MudItem>
+</MudGrid>
+
+@code {
+    private EngineHealth? _health;
+    private System.Text.Json.JsonElement[]? _encoders;
+    private System.Text.Json.JsonElement[]? _cores;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _health = await Engine.HealthAsync();
+        var encoders = await Engine.GetAsync("api/encoders");
+        if (encoders is { } doc && doc.TryGetProperty("probes", out var probes))
+        {
+            _encoders = probes.EnumerateArray().ToArray();
+        }
+        var cores = await Engine.GetAsync("api/cores");
+        if (cores is { } coreDoc && coreDoc.ValueKind == System.Text.Json.JsonValueKind.Array)
+        {
+            _cores = coreDoc.EnumerateArray().ToArray();
+        }
+    }
+
+    private string BrowserEngine() => Library.PublicEngineUrl ?? "the page host on port 9090";
+}

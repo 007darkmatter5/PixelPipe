@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PixelPipe player</title>
+  <style>
+    :root { color-scheme: dark; }
+    body { margin: 0; background: #0e0e12; color: #f4f4f8; font-family: "Segoe UI", sans-serif; }
+    main { max-width: 960px; margin: 0 auto; padding: 24px; }
+    h1 { font-size: 1.3rem; margin: 0 0 12px; }
+    .stage { position: relative; background: #000; border-radius: 12px; overflow: hidden; }
+    video { width: 100%; max-height: 70vh; background: #000; display: block; image-rendering: pixelated; }
+    .hud { position: absolute; left: 12px; bottom: 12px; right: 12px; font: 12px/1.4 ui-monospace, monospace;
+           color: #fff; text-shadow: 0 1px 2px #000; pointer-events: none; white-space: pre-wrap; }
+    button { background: #7c5cff; color: white; border: 0; border-radius: 8px; padding: 10px 16px; font-weight: 600; cursor: pointer; }
+    button.secondary { background: transparent; color: #ddd; border: 1px solid #444; }
+    .row { display: flex; gap: 8px; margin: 12px 0; flex-wrap: wrap; }
+    p.help { color: #b8b8c8; font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>PixelPipe</h1>
+  <div class="stage" id="stage" tabindex="0">
+    <video id="video" autoplay playsinline></video>
+    <div class="hud" id="hud">Click Play, then use the arrows. Z = B, X = A, Enter = Start, Shift = Select.</div>
+  </div>
+  <div class="row">
+    <button id="play" type="button">Play</button>
+    <button id="save" class="secondary" type="button">Save state</button>
+    <button id="load" class="secondary" type="button">Load state</button>
+  </div>
+  <p class="help">ROM <code id="rom"></code>. A gamepad’s face buttons and D-pad are mapped onto the libretro joypad.</p>
+</main>
+<script>
+const ROM = '__ROM__';
+document.getElementById('rom').textContent = ROM;
+const video = document.getElementById('video');
+const hud = document.getElementById('hud');
+const keys = new Set();
+const state = { pc: null, dc: null, stream: null, timer: 0, lastPing: 0, rtt: null, mask: 0 };
+
+function setHud(extra) {
+  const lines = [
+    state.pc ? state.pc.connectionState : 'idle',
+    'mask 0x' + state.mask.toString(16),
+    state.rtt != null ? ('rtt ' + state.rtt.toFixed(1) + ' ms') : 'rtt …',
+    extra || ''
+  ];
+  hud.textContent = lines.filter(Boolean).join('\n');
+}
+
+window.addEventListener('keydown', (e) => {
+  keys.add(e.key);
+  if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key)) e.preventDefault();
+});
+window.addEventListener('keyup', (e) => keys.delete(e.key));
+
+function maskFromInput() {
+  let m = 0;
+  const down = (k) => keys.has(k);
+  if (down('z') || down('Z')) m |= 1 << 0;
+  if (down('a') || down('A')) m |= 1 << 8; // also accept A as the NES A button when not used for left
+  if (down('x') || down('X')) m |= 1 << 8;
+  if (down('Shift')) m |= 1 << 2;
+  if (down('Enter')) m |= 1 << 3;
+  if (down('ArrowUp') || down('w') || down('W')) m |= 1 << 4;
+  if (down('ArrowDown') || down('s') || down('S')) m |= 1 << 5;
+  if (down('ArrowLeft')) m |= 1 << 6;
+  if (down('ArrowRight')) m |= 1 << 7;
+  const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+  for (const gp of pads) {
+    if (!gp) continue;
+    const b = (i) => gp.buttons[i] && (gp.buttons[i].pressed || gp.buttons[i].value > 0.5);
+    if (b(1)) m |= 1 << 0;
+    if (b(0)) m |= 1 << 8;
+    if (b(3)) m |= 1 << 1;
+    if (b(2)) m |= 1 << 9;
+    if (b(4)) m |= 1 << 10;
+    if (b(5)) m |= 1 << 11;
+    if (b(8)) m |= 1 << 2;
+    if (b(9)) m |= 1 << 3;
+    if (b(12) || gp.axes[1] < -0.5) m |= 1 << 4;
+    if (b(13) || gp.axes[1] > 0.5) m |= 1 << 5;
+    if (b(14) || gp.axes[0] < -0.5) m |= 1 << 6;
+    if (b(15) || gp.axes[0] > 0.5) m |= 1 << 7;
+  }
+  return m;
+}
+
+function sendInput() {
+  if (!state.dc || state.dc.readyState !== 'open') return;
+  state.mask = maskFromInput();
+  const msg = { mask: state.mask };
+  const now = performance.now();
+  if (now - state.lastPing > 500) {
+    msg.ping = now;
+    state.lastPing = now;
+  }
+  state.dc.send(JSON.stringify(msg));
+}
+
+async function waitIce(pc) {
+  if (pc.iceGatheringState === 'complete') return;
+  await new Promise((resolve) => {
+    const timer = setTimeout(resolve, 2000);
+    pc.addEventListener('icegatheringstatechange', () => {
+      if (pc.iceGatheringState === 'complete') {
+        clearTimeout(timer);
+        resolve();
+      }
+    });
+  });
+}
+
+function bindReceivers() {
+  if (!state.pc) return;
+  for (const receiver of state.pc.getReceivers()) {
+    try {
+      if ('playoutDelayHint' in receiver) receiver.playoutDelayHint = 0;
+      if ('jitterBufferTarget' in receiver) receiver.jitterBufferTarget = 0;
+    } catch (_) {}
+  }
+}
+
+async function refreshStats() {
+  try {
+    const res = await fetch('/api/session/stats');
+    if (!res.ok) return;
+    const stats = await res.json();
+    let decode = '';
+    if (state.pc) {
+      const reports = await state.pc.getStats();
+      reports.forEach((report) => {
+        if (report.type === 'inbound-rtp' && report.kind === 'video' && report.framesDecoded) {
+          const dec = (report.totalDecodeTime / report.framesDecoded) * 1000;
+          const jitter = report.jitterBufferEmittedCount
+            ? (report.jitterBufferDelay / report.jitterBufferEmittedCount) * 1000
+            : 0;
+          const rtt = state.rtt || 0;
+          const estimate = (stats.encode_us_avg / 1000) + (rtt / 2) + jitter + dec;
+          decode = 'encode ' + (stats.encode_us_avg / 1000).toFixed(1)
+            + ' ms · decode ' + dec.toFixed(1)
+            + ' ms · jitter ' + jitter.toFixed(1)
+            + ' ms · est ' + estimate.toFixed(1) + ' ms';
+        }
+      });
+    }
+    setHud((stats.encoder || '') + ' ' + stats.width + 'x' + stats.height + ' ' + stats.fps.toFixed(1) + ' fps\n' + decode);
+  } catch (_) {}
+}
+
+async function play() {
+  if (state.pc) return;
+  setHud('starting ' + ROM);
+  const started = await fetch('/api/session', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ rom: ROM }),
+  });
+  if (!started.ok) {
+    setHud(await started.text());
+    return;
+  }
+  const pc = new RTCPeerConnection({ iceServers: [] });
+  state.pc = pc;
+  state.stream = new MediaStream();
+  pc.ontrack = (ev) => {
+    state.stream.addTrack(ev.track);
+    video.srcObject = state.stream;
+    video.play().catch(() => {});
+    bindReceivers();
+  };
+  pc.ondatachannel = (ev) => {
+    state.dc = ev.channel;
+    state.dc.onopen = () => {
+      state.timer = setInterval(sendInput, 16);
+    };
+    state.dc.onmessage = (ev) => {
+      try {
+        const msg = JSON.parse(ev.data);
+        if (typeof msg.pong === 'number') state.rtt = performance.now() - msg.pong;
+      } catch (_) {}
+    };
+  };
+  pc.onconnectionstatechange = () => setHud();
+  const offerRes = await fetch('/api/session/offer', { method: 'POST' });
+  if (!offerRes.ok) {
+    setHud(await offerRes.text());
+    return;
+  }
+  const offer = await offerRes.json();
+  await pc.setRemoteDescription(offer);
+  const answer = await pc.createAnswer();
+  await pc.setLocalDescription(answer);
+  await waitIce(pc);
+  const answered = await fetch('/api/session/answer', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ type: pc.localDescription.type, sdp: pc.localDescription.sdp }),
+  });
+  if (!answered.ok) {
+    setHud(await answered.text());
+    return;
+  }
+  document.getElementById('stage').focus();
+  setInterval(refreshStats, 1000);
+  setHud('connecting');
+}
+
+document.getElementById('play').addEventListener('click', play);
+document.getElementById('save').addEventListener('click', () => fetch('/api/session/savestate', { method: 'POST' }));
+document.getElementById('load').addEventListener('click', () => fetch('/api/session/loadstate', { method: 'POST' }));
+</script>
+</body>
+</html>

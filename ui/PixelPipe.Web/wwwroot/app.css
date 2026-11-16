@@ -1,0 +1,160 @@
+:root {
+  color-scheme: dark;
+}
+
+html, body {
+  margin: 0;
+  background: #0e0e12;
+  color: #f4f4f8;
+  font-family: "Segoe UI", Roboto, sans-serif;
+}
+
+.brand {
+  letter-spacing: 0.04em;
+  font-weight: 700;
+}
+
+.tagline {
+  opacity: 0.7;
+}
+
+.appbar {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.main-content {
+  padding: 28px 32px 64px;
+}
+
+.page-head, .row, .filters {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.page-head {
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.filters {
+  margin-bottom: 20px;
+}
+
+.shelf {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 18px;
+}
+
+.poster {
+  background: #17171f;
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  transition: transform 0.15s ease;
+}
+
+.poster:hover {
+  transform: translateY(-4px);
+}
+
+.poster img, .detail-art {
+  width: 100%;
+  aspect-ratio: 5 / 7;
+  object-fit: cover;
+  display: block;
+  background: #101018;
+}
+
+.poster-meta {
+  padding: 12px;
+}
+
+.poster-meta .title {
+  min-height: 2.6em;
+}
+
+.detail {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  gap: 28px;
+  align-items: start;
+}
+
+.detail-art {
+  border-radius: 14px;
+  width: 260px;
+  height: auto;
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  gap: 6px 12px;
+  margin: 18px 0;
+}
+
+.facts dt {
+  color: #b7b7c8;
+}
+
+.facts dd {
+  margin: 0;
+}
+
+.player-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  gap: 20px;
+}
+
+.stage {
+  position: relative;
+  background: #000;
+  border-radius: 14px;
+  overflow: hidden;
+  outline: none;
+}
+
+.stage video, #pp-video {
+  width: 100%;
+  max-height: 72vh;
+  background: #000;
+  display: block;
+  image-rendering: pixelated;
+  aspect-ratio: 4 / 3;
+  object-fit: contain;
+}
+
+.hud {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: #fff;
+  text-shadow: 0 1px 2px #000;
+  pointer-events: none;
+  white-space: pre-wrap;
+}
+
+.player-side {
+  background: #17171f;
+  border-radius: 14px;
+  padding: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.mud-paper {
+  background: #17171f !important;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+@media (max-width: 800px) {
+  .main-content { padding: 16px; }
+  .detail, .player-layout { grid-template-columns: 1fr; }
+  .detail-art { width: min(260px, 100%); }
+  .tagline { display: none; }
+}
