@@ -25,8 +25,8 @@ WizardStyle=modern
 Source: "..\dist\windows\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Tasks]
-Name: startup; Description: "Start PixelPipe when you sign in (recommended; this account can see \\server\share)"; GroupDescription: "How PixelPipe runs:"; Flags: exclusive checkedonce
-Name: service; Description: "Run as a Windows service (LocalSystem). A password-protected network folder is usually invisible until you set the service account."; GroupDescription: "How PixelPipe runs:"; Flags: exclusive
+Name: startup; Description: "Start PixelPipe when you sign in (recommended; this account can see \\server\share)"; GroupDescription: "How PixelPipe runs:"; Flags: exclusive
+Name: service; Description: "Run as a Windows service (LocalSystem). A password-protected network folder is usually invisible until you set the service account."; GroupDescription: "How PixelPipe runs:"; Flags: exclusive unchecked
 Name: firewall; Description: "Open the firewall for the web UI (TCP 8080), the engine (TCP 9090), and WebRTC (UDP 50000-50100)"; Flags: checkedonce
 
 [Icons]
