@@ -1,4 +1,4 @@
-# Attach dist\PixelPipe-Setup.exe and its SHA256 file to a GitHub pre-release.
+# Attach dist\PixelPipe-Setup-<version>.exe and its SHA256 file to a GitHub pre-release.
 # Called from .github/workflows/release-windows.yml with GH_TOKEN and RELEASE_TAG.
 $ErrorActionPreference = 'Stop'
 $tag = $env:RELEASE_TAG
@@ -11,15 +11,17 @@ if ([string]::IsNullOrWhiteSpace($repo)) {
 }
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$exe = Join-Path $root 'dist\PixelPipe-Setup.exe'
-$sum = Join-Path $root 'dist\PixelPipe-Setup.exe.sha256'
-if (-not (Test-Path $exe)) {
-    throw "Installer was not built: $exe"
+$exeItem = Get-ChildItem (Join-Path $root 'dist') -Filter 'PixelPipe-Setup-*.exe' |
+    Where-Object { $_.Extension -eq '.exe' } |
+    Select-Object -First 1
+if (-not $exeItem) {
+    throw 'Installer was not built (expected dist\PixelPipe-Setup-<version>.exe)'
 }
-
+$exe = $exeItem.FullName
+$sum = "$exe.sha256"
 $hash = (Get-FileHash -Algorithm SHA256 -Path $exe).Hash.ToLowerInvariant()
-Set-Content -Path $sum -Value "$hash  PixelPipe-Setup.exe" -Encoding ascii
-Write-Host "sha256 $hash"
+Set-Content -Path $sum -Value "$hash  $($exeItem.Name)" -Encoding ascii
+Write-Host "sha256 $hash $($exeItem.Name)"
 
 if ($tag -eq 'v0.2.0-preview') {
     $title = 'PixelPipe 0.2.0 preview (Windows)'
@@ -29,6 +31,16 @@ NES, SNES, and Genesis play end to end, including save states. NVENC is selected
 NVENC on a real NVIDIA GPU, and this installer on a real Windows 11 desktop, still need verification.
 
 SHA256 is in PixelPipe-Setup.exe.sha256.
+"@
+}
+elseif ($tag -eq 'v0.2.3-preview') {
+    $title = 'PixelPipe 0.2.3 preview (Windows)'
+    $notes = @"
+The installer accepts a typed mapped-drive path such as M:\Games\ROMs even though Browse, which runs elevated, may not list that drive. Settings has a folder browser that runs as the signed-in user, saves the path, and stores the UNC form when Windows can resolve it.
+
+The download is PixelPipe-Setup-0.2.3.exe. Installing it over an existing PixelPipe keeps the same Add/Remove Programs entry, config.json, and saves, and restarts the tray.
+
+SHA256 is in PixelPipe-Setup-0.2.3.exe.sha256.
 "@
 }
 elseif ($tag -eq 'v0.2.2-preview') {
@@ -60,7 +72,7 @@ else {
     $notes = @"
 Windows installer for $tag.
 
-SHA256 is in PixelPipe-Setup.exe.sha256. This is a pre-release.
+SHA256 is in $($exeItem.Name).sha256. This is a pre-release.
 "@
 }
 

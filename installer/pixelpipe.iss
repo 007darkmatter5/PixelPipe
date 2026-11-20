@@ -1,7 +1,7 @@
 ; PixelPipe Windows installer. Build it with scripts\build-windows.ps1.
 
 #define MyAppName "PixelPipe"
-#define MyAppVersion "0.2.2"
+#define MyAppVersion "0.2.3"
 #define MyAppPublisher "PixelPipe"
 
 [Setup]
@@ -9,11 +9,16 @@ AppId={{B7E1C4A2-9D55-4F0E-8A61-3C2D9E7F4A18}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
+VersionInfoVersion=0.2.3.0
+VersionInfoProductVersion=0.2.3
 DefaultDirName={autopf}\PixelPipe
 DefaultGroupName=PixelPipe
 DisableProgramGroupPage=yes
+UsePreviousTasks=yes
+CloseApplications=force
+RestartApplications=no
 OutputDir=..\dist
-OutputBaseFilename=PixelPipe-Setup
+OutputBaseFilename=PixelPipe-Setup-{#MyAppVersion}
 Compression=lzma2
 SolidCompression=yes
 ArchitecturesAllowed=x64compatible
@@ -59,7 +64,7 @@ var
   Dir: String;
 begin
   Dir := Trim(RomsEdit.Text);
-  if BrowseForFolder('Select the ROM folder. Network locations are listed here, or paste a path such as \\unas-pro\roms.', Dir, False) then
+  if BrowseForFolder('Mapped drives such as M: may not be listed because Setup is running as administrator. Cancel and type the path, or choose the folder later in Settings.', Dir, False) then
     RomsEdit.Text := Dir;
 end;
 
@@ -74,13 +79,15 @@ begin
 
   Prompt := TNewStaticText.Create(RomsPage);
   Prompt.Parent := RomsPage.Surface;
-  Prompt.Caption := 'Leave this blank to play the bundled demo ROMs. Browse, or paste a UNC path such as \\unas-pro\roms. PixelPipe does not create the folder and does not copy your ROMs.';
+  Prompt.Caption :=
+    'Leave this blank to play the bundled demo ROMs, or type a path such as M:\Games\ROMs or \\unas-pro\roms. ' +
+    'The path is saved as you type it. Setup runs as administrator, so Browse may not list mapped drives; type the drive letter or use the folder browser in Settings after install. PixelPipe does not create the folder.';
   Prompt.AutoSize := False;
   Prompt.WordWrap := True;
   Prompt.Left := 0;
   Prompt.Top := 0;
   Prompt.Width := RomsPage.SurfaceWidth;
-  Prompt.Height := ScaleY(64);
+  Prompt.Height := ScaleY(96);
 
   RomsEdit := TNewEdit.Create(RomsPage);
   RomsEdit.Parent := RomsPage.Surface;

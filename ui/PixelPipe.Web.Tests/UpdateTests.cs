@@ -46,8 +46,10 @@ public sealed class UpdateTests
         const string json = """
             [
               {"tag_name":"v0.2.2-preview","draft":false,"prerelease":true,"body":"Fixes","html_url":"https://example/r","assets":[
-                {"id":5,"name":"PixelPipe-Setup.exe"},
-                {"id":6,"name":"PixelPipe-Setup.exe.sha256"}
+                {"id":5,"name":"PixelPipe-Setup-0.2.3.exe"},
+                {"id":6,"name":"PixelPipe-Setup-0.2.3.exe.sha256"},
+                {"id":7,"name":"PixelPipe-Setup.exe"},
+                {"id":8,"name":"PixelPipe-Setup.exe.sha256"}
               ]}
             ]
             """;
@@ -55,6 +57,26 @@ public sealed class UpdateTests
         var chosen = ReleaseSelection.NewerThan(parsed, new AppVersion(0, 2, 1, null), includePreviews: true);
         Assert.Equal(5, chosen?.ExeAssetId);
         Assert.Equal(6, chosen?.ShaAssetId);
+        Assert.Equal("PixelPipe-Setup-0.2.3.exe", chosen?.ExeName);
         Assert.Equal("Fixes", chosen?.Notes);
+    }
+
+    [Fact]
+    public void Old_unversioned_installer_name_still_matches()
+    {
+        const string json = """
+            [
+              {"tag_name":"v0.2.2-preview","draft":false,"prerelease":true,"body":"old","assets":[
+                {"id":1,"name":"PixelPipe-Setup.exe"},
+                {"id":2,"name":"PixelPipe-Setup.exe.sha256"}
+              ]}
+            ]
+            """;
+        var chosen = ReleaseSelection.NewerThan(
+            UpdateService.ParseReleases(json),
+            new AppVersion(0, 2, 1, null),
+            includePreviews: true);
+        Assert.Equal(1, chosen?.ExeAssetId);
+        Assert.Equal(2, chosen?.ShaAssetId);
     }
 }

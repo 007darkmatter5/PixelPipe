@@ -3,7 +3,13 @@
 # post-install script still escapes backslashes when the wizard page is not shown.
 $ErrorActionPreference = 'Stop'
 $Root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$Setup = Join-Path $Root 'dist\PixelPipe-Setup.exe'
+$SetupItem = Get-ChildItem (Join-Path $Root 'dist') -Filter 'PixelPipe-Setup-*.exe' |
+    Where-Object { $_.Extension -eq '.exe' } |
+    Select-Object -First 1
+if (-not $SetupItem) {
+    throw 'Installer not found under dist (expected PixelPipe-Setup-<version>.exe)'
+}
+$Setup = $SetupItem.FullName
 $Log = Join-Path $Root 'dist\install.log'
 $Roms = 'C:\PixelPipeRoms'
 $InstallDir = 'C:\Program Files\PixelPipe'
@@ -15,6 +21,46 @@ function Stop-PixelPipe {
         Get-Process -Name $name -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     }
     Start-Sleep -Seconds 2
+}
+
+function Wait-PixelPipeUi {
+    for ($i = 0; $i -lt 40; $i++) {
+        try {
+            $response = Invoke-WebRequest -Uri 'http://127.0.0.1:8080' -UseBasicParsing -TimeoutSec 5
+            if ($response.StatusCode -eq 200) {
+                return
+            }
+        }
+        catch {
+            Write-Host "waiting for http://127.0.0.1:8080 ($($i + 1))"
+        }
+        Start-Sleep -Seconds 3
+    }
+    $engineLog = 'C:\ProgramData\PixelPipe\pixelpipe.log'
+    if (Test-Path $engineLog) {
+        Write-Host '--- pixelpipe.log (tail) ---'
+        Get-Content $engineLog -Tail 80
+    }
+    Show-InstallLog
+    throw 'PixelPipe did not answer on http://127.0.0.1:8080'
+}
+
+function Get-PixelPipeUninstallKeys {
+    $roots = @(
+        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
+        'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall'
+    )
+    $found = @()
+    foreach ($root in $roots) {
+        if (-not (Test-Path $root)) { continue }
+        foreach ($key in Get-ChildItem $root) {
+            $prop = Get-ItemProperty $key.PSPath
+            if ($prop.DisplayName -eq 'PixelPipe') {
+                $found += $key.PSPath
+            }
+        }
+    }
+    return $found
 }
 
 function Show-InstallLog {
@@ -75,30 +121,52 @@ if ($cfg.cores -ne (Join-Path $InstallDir 'cores')) { throw "config cores is '$(
 if ($cfg.data -ne 'C:\ProgramData\PixelPipe') { throw "config data is '$($cfg.data)'" }
 Write-Host "config.json roms=$($cfg.roms)"
 
-$ready = $false
-for ($i = 0; $i -lt 40; $i++) {
-    try {
-        $response = Invoke-WebRequest -Uri 'http://127.0.0.1:8080' -UseBasicParsing -TimeoutSec 5
-        if ($response.StatusCode -eq 200) {
-            $ready = $true
-            break
-        }
-    }
-    catch {
-        Write-Host "waiting for http://127.0.0.1:8080 ($($i + 1))"
-    }
-    Start-Sleep -Seconds 3
-}
-if (-not $ready) {
-    $engineLog = 'C:\ProgramData\PixelPipe\pixelpipe.log'
-    if (Test-Path $engineLog) {
-        Write-Host '--- pixelpipe.log (tail) ---'
-        Get-Content $engineLog -Tail 80
-    }
-    Show-InstallLog
-    throw 'PixelPipe did not answer on http://127.0.0.1:8080'
-}
+Wait-PixelPipeUi
 Write-Host 'UI responded on http://127.0.0.1:8080'
+
+$installed = @(Get-PixelPipeUninstallKeys)
+if ($installed.Count -ne 1) {
+    throw "expected one Add/Remove Programs entry after install, found $($installed.Count)"
+}
+
+$saveDir = 'C:\ProgramData\PixelPipe\saves'
+New-Item -ItemType Directory -Force -Path $saveDir | Out-Null
+$sentinel = Join-Path $saveDir 'upgrade-keep.txt'
+Set-Content -Path $sentinel -Value 'keep' -Encoding ascii
+
+$upgradeLog = Join-Path $Root 'dist\install-upgrade.log'
+if (Test-Path $upgradeLog) { Remove-Item -Force $upgradeLog }
+Write-Host "upgrade in place $Setup"
+# No /ROMDIR: the second install must keep config.json. Processes are still running
+# so the installer has to close them and the silent startup task starts them again.
+$upgrade = Start-Process -FilePath $Setup -ArgumentList @(
+    '/VERYSILENT',
+    '/SUPPRESSMSGBOXES',
+    '/NORESTART',
+    '/FORCECLOSEAPPLICATIONS',
+    '/TASKS=startup,firewall',
+    "/LOG=$upgradeLog"
+) -PassThru
+if (-not $upgrade.WaitForExit(300000)) {
+    if (Test-Path $upgradeLog) { Get-Content $upgradeLog -Tail 120 }
+    Stop-Process -Id $upgrade.Id -Force -ErrorAction SilentlyContinue
+    throw 'upgrade installer did not exit within 5 minutes'
+}
+if ($upgrade.ExitCode -ne 0) {
+    if (Test-Path $upgradeLog) { Get-Content $upgradeLog -Tail 120 }
+    throw "upgrade installer exit code $($upgrade.ExitCode)"
+}
+
+$cfg2 = Get-Content $ConfigPath -Raw | ConvertFrom-Json
+if ($cfg2.roms -ne $Roms) { throw "upgrade changed roms to '$($cfg2.roms)'" }
+if ((Get-Content $sentinel -Raw).Trim() -ne 'keep') { throw 'save sentinel was removed by the upgrade' }
+$after = @(Get-PixelPipeUninstallKeys)
+if ($after.Count -ne 1) {
+    throw "upgrade left $($after.Count) Add/Remove Programs entries"
+}
+Write-Host "upgrade kept roms=$($cfg2.roms) and one uninstall entry"
+Wait-PixelPipeUi
+Write-Host 'UI responded again after the in-place upgrade'
 
 Stop-PixelPipe
 $unins = Join-Path $InstallDir 'unins000.exe'

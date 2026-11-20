@@ -55,12 +55,12 @@ jobs:
         if: always()
         with:
           name: windows-install-log
-          path: dist/install.log
+          path: dist/install*.log
           if-no-files-found: warn
       - uses: actions/upload-artifact@v4
         with:
           name: PixelPipe-Setup
-          path: dist/PixelPipe-Setup.exe
+          path: dist/PixelPipe-Setup-*.exe
           if-no-files-found: error
 
   ui:

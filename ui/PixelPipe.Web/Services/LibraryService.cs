@@ -9,6 +9,7 @@ public sealed class LibraryService
     private readonly IWebHostEnvironment _env;
     private readonly object _gate = new();
     private LibrarySnapshot? _cache;
+    private string? _romsOverride;
 
     public LibraryService(IConfiguration config, IWebHostEnvironment env)
     {
@@ -20,6 +21,17 @@ public sealed class LibraryService
     {
         get
         {
+            if (!string.IsNullOrWhiteSpace(_romsOverride))
+            {
+                return _romsOverride;
+            }
+
+            var fromFile = ReadSavedRoms();
+            if (!string.IsNullOrWhiteSpace(fromFile))
+            {
+                return fromFile;
+            }
+
             var configured = _config["PixelPipe:RomsPath"] ?? "roms";
             // Keep UNC and other absolute paths even when the share is briefly unreachable.
             if (Path.IsPathRooted(configured) || configured.StartsWith(@"\\", StringComparison.Ordinal))
@@ -46,6 +58,43 @@ public sealed class LibraryService
         {
             var value = _config["PixelPipe:PublicEngineUrl"];
             return string.IsNullOrWhiteSpace(value) ? null : value.TrimEnd('/');
+        }
+    }
+
+    private static string? ReadSavedRoms()
+    {
+        var file = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+            "PixelPipe",
+            "config.json");
+        if (!File.Exists(file))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(File.ReadAllText(file));
+            if (!doc.RootElement.TryGetProperty("roms", out var roms))
+            {
+                return null;
+            }
+
+            var value = roms.GetString();
+            return string.IsNullOrWhiteSpace(value) ? null : value;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    public void UseRoms(string path)
+    {
+        lock (_gate)
+        {
+            _romsOverride = path;
+            _cache = null;
         }
     }
 

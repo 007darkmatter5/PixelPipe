@@ -97,7 +97,8 @@ try {
     if ($iscc) {
         & $iscc (Join-Path $Root 'installer\pixelpipe.iss')
         if ($LASTEXITCODE -ne 0) { throw 'Inno Setup failed' }
-        Write-Host "installer: $(Join-Path $Root 'dist\PixelPipe-Setup.exe')"
+        $built = Get-ChildItem (Join-Path $Root 'dist') -Filter 'PixelPipe-Setup-*.exe' | Select-Object -First 1
+        if ($built) { Write-Host "installer: $($built.FullName)" }
     }
     elseif ($env:GITHUB_ACTIONS -eq 'true') {
         throw 'ISCC.exe is required on the CI runner'

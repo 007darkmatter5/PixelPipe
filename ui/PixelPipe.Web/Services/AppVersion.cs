@@ -106,7 +106,48 @@ public sealed record RemoteRelease(
     string? Notes,
     string? HtmlUrl,
     long? ExeAssetId,
-    long? ShaAssetId);
+    long? ShaAssetId,
+    string? ExeName = null);
+
+public static class SetupAssets
+{
+    public static bool IsInstaller(string name)
+    {
+        if (!name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return name.Equals("PixelPipe-Setup.exe", StringComparison.OrdinalIgnoreCase)
+            || name.StartsWith("PixelPipe-Setup-", StringComparison.OrdinalIgnoreCase);
+    }
+
+    public static bool IsChecksumFor(string checksumName, string installerName) =>
+        checksumName.Equals(installerName + ".sha256", StringComparison.OrdinalIgnoreCase)
+        || checksumName.Equals("PixelPipe-Setup.exe.sha256", StringComparison.OrdinalIgnoreCase);
+
+    public static (string Name, long Id)? PreferInstaller(IReadOnlyList<(string Name, long Id)> installers)
+    {
+        var versioned = installers
+            .Where(item => item.Name.StartsWith("PixelPipe-Setup-", StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(item => item.Name, StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault();
+        if (!string.IsNullOrEmpty(versioned.Name))
+        {
+            return versioned;
+        }
+
+        foreach (var item in installers)
+        {
+            if (item.Name.Equals("PixelPipe-Setup.exe", StringComparison.OrdinalIgnoreCase))
+            {
+                return item;
+            }
+        }
+
+        return null;
+    }
+}
 
 public static class ReleaseSelection
 {

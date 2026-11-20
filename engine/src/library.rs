@@ -109,7 +109,7 @@ struct LibraryMeta {
 }
 
 pub struct Library {
-    root: PathBuf,
+    root: std::sync::Mutex<PathBuf>,
     bundled: Option<PathBuf>,
     cache: std::sync::Mutex<Option<(SystemTime, Vec<Game>)>>,
 }
@@ -121,14 +121,21 @@ impl Library {
             .and_then(|exe| exe.parent().map(|dir| dir.join("demo-roms")))
             .filter(|dir| dir.is_dir());
         Self {
-            root,
+            root: std::sync::Mutex::new(root),
             bundled,
             cache: std::sync::Mutex::new(None),
         }
     }
 
-    pub fn root(&self) -> &Path {
-        &self.root
+    pub fn set_root(&self, root: PathBuf) {
+        // Cache lock first, then the root lock, matching games().
+        let mut cache = self.cache.lock().expect("library cache");
+        *self.root.lock().expect("library root") = root;
+        *cache = None;
+    }
+
+    pub fn root(&self) -> PathBuf {
+        self.root.lock().expect("library root").clone()
     }
 
     pub fn invalidate(&self) {
@@ -150,8 +157,9 @@ impl Library {
         if let Some(games) = fresh {
             return Ok(games);
         }
-        let mut games = if self.root.is_dir() {
-            scan(&self.root)?
+        let root = self.root();
+        let mut games = if root.is_dir() {
+            scan(&root)?
         } else {
             Vec::new()
         };
@@ -187,7 +195,7 @@ impl Library {
                 .context("bundled demo ROMs are not installed")?;
             crate::config::resolve_rom(bundled, rest)?
         } else {
-            crate::config::resolve_rom(&self.root, outer)?
+            crate::config::resolve_rom(&self.root(), outer)?
         };
         match member {
             Some(member) => extract_zip_member(&path, member, cache),

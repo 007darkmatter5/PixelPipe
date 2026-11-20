@@ -58,6 +58,19 @@ app.MapGet("/media/boxart/{*path}", (string path, LibraryService library) =>
     return Results.Content(library.PlaceholderSvg(game, relative), "image/svg+xml");
 });
 
+app.MapGet("/api/library/folders", (string? path) => Results.Json(RomFolder.List(path)));
+app.MapPost("/api/library/roms", async (RomPathBody body, LibraryService library, EngineClient engine) =>
+{
+    if (string.IsNullOrWhiteSpace(body.Path))
+    {
+        return Results.BadRequest("ROM path is empty.");
+    }
+
+    var saved = RomFolder.Remember(body.Path);
+    library.UseRoms(saved.Path);
+    await engine.PostAsync("api/library/root", new { path = saved.Path });
+    return Results.Json(new { path = saved.Path, unc = saved.Unc, games = library.Get().Games.Count });
+});
 app.MapGet("/api/app/update", (UpdateService updates) => Results.Json(updates.Snapshot));
 app.MapPost("/api/app/update/check", async (UpdateService updates, CancellationToken cancellationToken) =>
 {
@@ -89,5 +102,6 @@ app.MapRazorComponents<PixelPipe.Web.Components.App>()
 
 app.Run();
 
+internal sealed record RomPathBody(string Path);
 internal sealed record UpdateSettingsBody(bool IncludePreviews, string? Token, bool ClearToken);
 internal sealed record UpdateApplyBody(bool Confirm);

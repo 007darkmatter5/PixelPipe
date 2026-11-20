@@ -88,6 +88,7 @@ public sealed class UpdateService : BackgroundService
                 UpdateAvailable = newer is not null,
                 ExeAssetId = newer?.ExeAssetId,
                 ShaAssetId = newer?.ShaAssetId,
+                ExeName = newer?.ExeName,
             });
         }
         catch (UpdateAccessException ex)
@@ -121,7 +122,13 @@ public sealed class UpdateService : BackgroundService
 
         var dir = Path.Combine(DataDir(), "updates");
         Directory.CreateDirectory(dir);
-        var setupPath = Path.Combine(dir, "PixelPipe-Setup.exe");
+        var fileName = Path.GetFileName(snapshot.ExeName ?? "");
+        if (string.IsNullOrWhiteSpace(fileName) || !SetupAssets.IsInstaller(fileName))
+        {
+            fileName = "PixelPipe-Setup.exe";
+        }
+
+        var setupPath = Path.Combine(dir, fileName);
         Set(s => s with { Phase = "downloading" });
         var setup = await DownloadAssetAsync(snapshot.ExeAssetId.Value, cancellationToken);
         var shaText = await DownloadAssetTextAsync(snapshot.ShaAssetId.Value, cancellationToken);
@@ -146,7 +153,7 @@ public sealed class UpdateService : BackgroundService
             .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
         if (string.IsNullOrWhiteSpace(info))
         {
-            return "0.2.2";
+            return "0.2.3";
         }
 
         var plus = info.IndexOf('+');
@@ -207,19 +214,41 @@ public sealed class UpdateService : BackgroundService
 
             long? exe = null;
             long? sha = null;
+            string? exeName = null;
             if (item.TryGetProperty("assets", out var assets))
             {
+                var installers = new List<(string Name, long Id)>();
+                var checksums = new List<(string Name, long Id)>();
                 foreach (var asset in assets.EnumerateArray())
                 {
-                    var name = asset.GetProperty("name").GetString();
+                    var name = asset.GetProperty("name").GetString() ?? "";
                     var id = asset.GetProperty("id").GetInt64();
-                    if (name == "PixelPipe-Setup.exe")
+                    if (SetupAssets.IsInstaller(name))
                     {
-                        exe = id;
+                        installers.Add((name, id));
                     }
-                    else if (name == "PixelPipe-Setup.exe.sha256")
+                    else if (name.EndsWith(".sha256", StringComparison.OrdinalIgnoreCase))
                     {
-                        sha = id;
+                        checksums.Add((name, id));
+                    }
+                }
+
+                var chosen = SetupAssets.PreferInstaller(installers);
+                if (chosen is { } setup)
+                {
+                    exe = setup.Id;
+                    exeName = setup.Name;
+                    var checksum = checksums.FirstOrDefault(asset =>
+                        asset.Name.Equals(setup.Name + ".sha256", StringComparison.OrdinalIgnoreCase));
+                    if (checksum.Name is null)
+                    {
+                        checksum = checksums.FirstOrDefault(asset =>
+                            asset.Name.Equals("PixelPipe-Setup.exe.sha256", StringComparison.OrdinalIgnoreCase));
+                    }
+
+                    if (checksum.Name is not null)
+                    {
+                        sha = checksum.Id;
                     }
                 }
             }
@@ -231,7 +260,8 @@ public sealed class UpdateService : BackgroundService
                 item.TryGetProperty("body", out var body) ? body.GetString() : null,
                 item.TryGetProperty("html_url", out var url) ? url.GetString() : null,
                 exe,
-                sha));
+                sha,
+                exeName));
         }
 
         return list;
@@ -342,7 +372,7 @@ public sealed class UpdateService : BackgroundService
 
 public sealed record UpdateSnapshot
 {
-    public string CurrentVersion { get; init; } = "0.2.2";
+    public string CurrentVersion { get; init; } = "0.2.3";
     public string? LatestVersion { get; init; }
     public string? ReleaseNotes { get; init; }
     public string? ReleaseUrl { get; init; }
@@ -354,6 +384,7 @@ public sealed record UpdateSnapshot
     public string Phase { get; init; } = "idle";
     public long? ExeAssetId { get; init; }
     public long? ShaAssetId { get; init; }
+    public string? ExeName { get; init; }
 }
 
 public sealed class UpdateAccessException : Exception

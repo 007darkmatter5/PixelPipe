@@ -1,5 +1,7 @@
 using System.Diagnostics;
+using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace PixelPipe.Tray;
 
@@ -61,6 +63,8 @@ internal sealed class TrayApplication : ApplicationContext
             ContextMenuStrip = menu,
         };
         _icon.DoubleClick += (_, _) => OpenSite();
+        OfferRomFolder();
+        RememberUnc();
         StartChildren();
         _ = WatchUpdates();
     }
@@ -123,6 +127,87 @@ internal sealed class TrayApplication : ApplicationContext
             AppendLog(ex.Message);
         }
     }
+
+    private void OfferRomFolder()
+    {
+        var current = ReadRomsPath();
+        if (!string.IsNullOrWhiteSpace(current) &&
+            !current.EndsWith("demo-roms", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        using var dialog = new FolderBrowserDialog
+        {
+            Description = "Choose the ROM folder. Mapped drives such as M: are listed. You can also set a UNC path later in Settings.",
+            UseDescriptionForTitle = true,
+            ShowNewFolderButton = false,
+        };
+        if (dialog.ShowDialog() != DialogResult.OK || string.IsNullOrWhiteSpace(dialog.SelectedPath))
+        {
+            return;
+        }
+
+        SaveRoms(dialog.SelectedPath, UncFor(dialog.SelectedPath));
+    }
+
+    private void SaveRoms(string path, string? unc)
+    {
+        var file = Path.Combine(_dataDir, "config.json");
+        JsonNode root = File.Exists(file)
+            ? JsonNode.Parse(File.ReadAllText(file)) ?? new JsonObject()
+            : new JsonObject();
+        root["roms"] = path;
+        if (string.IsNullOrWhiteSpace(unc))
+        {
+            root.AsObject().Remove("roms_unc");
+        }
+        else
+        {
+            root["roms_unc"] = unc;
+        }
+
+        File.WriteAllText(file, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+    }
+
+    private void RememberUnc()
+    {
+        var path = ReadRomsPath();
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return;
+        }
+
+        var unc = UncFor(path);
+        if (string.IsNullOrWhiteSpace(unc))
+        {
+            return;
+        }
+
+        SaveRoms(path, unc);
+    }
+
+    private static string? UncFor(string path)
+    {
+        if (path.Length < 2 || path[1] != ':')
+        {
+            return null;
+        }
+
+        var buffer = new StringBuilder(512);
+        var length = buffer.Capacity;
+        if (WNetGetConnection(path[..2], buffer, ref length) != 0)
+        {
+            return null;
+        }
+
+        var remote = buffer.ToString().TrimEnd('\\');
+        var rest = path.Length > 2 ? path[2..].TrimStart('\\') : "";
+        return string.IsNullOrEmpty(rest) ? remote : remote + "\\" + rest;
+    }
+
+    [System.Runtime.InteropServices.DllImport("mpr.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    private static extern int WNetGetConnection(string localName, StringBuilder buffer, ref int length);
 
     private void StartChildren()
     {

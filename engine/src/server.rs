@@ -71,6 +71,7 @@ where
     let app = Router::new()
         .route("/api/health", get(health))
         .route("/api/library", get(library))
+        .route("/api/library/root", axum::routing::post(library_root))
         .route("/api/encoders", get(encoders))
         .route("/api/cores", get(cores))
         .route(
@@ -169,9 +170,27 @@ async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
 async fn library(State(state): State<AppState>) -> Result<Json<serde_json::Value>, ApiError> {
     let games = state.library.games()?;
     Ok(Json(serde_json::json!({
-        "roms_path": state.config.roms,
+        "roms_path": state.library.root(),
         "games": games,
     })))
+}
+
+async fn library_root(
+    State(state): State<AppState>,
+    Json(body): Json<LibraryRootBody>,
+) -> Result<StatusCode, ApiError> {
+    let path = body.path.trim();
+    if path.is_empty() {
+        return Err(ApiError::bad("rom path is empty"));
+    }
+    state.library.set_root(std::path::PathBuf::from(path));
+    tracing::info!(path, "library root updated");
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+struct LibraryRootBody {
+    path: String,
 }
 
 async fn encoders(State(state): State<AppState>) -> Json<EncoderReport> {
@@ -308,6 +327,13 @@ struct ApiError {
 }
 
 impl ApiError {
+    fn bad(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::BAD_REQUEST,
+            message: message.into(),
+        }
+    }
+
     fn not_found(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::NOT_FOUND,

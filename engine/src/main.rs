@@ -120,7 +120,7 @@ fn try_main() -> anyhow::Result<()> {
 fn build_config(cli: &Cli) -> Config {
     let file = config::load_file_config();
     Config {
-        roms: first_path(cli.roms.clone(), file.roms, "roms"),
+        roms: choose_roms(cli.roms.clone(), file.roms.clone(), file.roms_unc.clone()),
         cores: first_path(cli.cores.clone(), file.cores, "cores"),
         data: first_path(cli.data.clone(), file.data, "data"),
         bind: cli
@@ -138,6 +138,17 @@ fn build_config(cli: &Cli) -> Config {
         core_genesis: cli.core_genesis.clone(),
         spawn_ui: !cli.no_ui,
     }
+}
+
+fn choose_roms(cli: Option<PathBuf>, file: Option<PathBuf>, unc: Option<PathBuf>) -> PathBuf {
+    let chosen = first_path(cli, file, "roms");
+    if chosen.is_dir() {
+        return chosen;
+    }
+    if let Some(unc) = unc.filter(|path| path.is_dir()) {
+        return unc;
+    }
+    chosen
 }
 
 fn first_path(cli: Option<PathBuf>, file: Option<PathBuf>, default: &str) -> PathBuf {

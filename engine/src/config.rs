@@ -7,6 +7,8 @@ use crate::library::System;
 #[derive(Debug, Default, Deserialize)]
 pub struct FileConfig {
     pub roms: Option<PathBuf>,
+    #[serde(default)]
+    pub roms_unc: Option<PathBuf>,
     pub cores: Option<PathBuf>,
     pub data: Option<PathBuf>,
     pub bind: Option<String>,
