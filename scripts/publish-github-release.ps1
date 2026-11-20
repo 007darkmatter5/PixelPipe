@@ -31,6 +31,18 @@ NVENC on a real NVIDIA GPU, and this installer on a real Windows 11 desktop, sti
 SHA256 is in PixelPipe-Setup.exe.sha256.
 "@
 }
+elseif ($tag -eq 'v0.2.2-preview') {
+    $title = 'PixelPipe 0.2.2 preview (Windows)'
+    $notes = @"
+Sign-in is the default start mode. The ROM page has Browse and still accepts a pasted UNC path such as \\unas-pro\roms. An upgrade keeps the existing library config and saves.
+
+PixelPipe runs from the notification area with no console window. The bundled NES, SNES, and Genesis test ROMs stay in the library when the ROM folder is empty. Scanning walks subfolders and accepts zip archives and system folder names such as nes, snes, sfc, genesis, mega drive, and md.
+
+Settings and the tray can check GitHub releases, including previews, verify PixelPipe-Setup.exe.sha256, and install the update. A private repo needs a token saved in Settings.
+
+SHA256 is in PixelPipe-Setup.exe.sha256.
+"@
+}
 elseif ($tag -eq 'v0.2.1-preview') {
     $title = 'PixelPipe 0.2.1 preview (Windows)'
     $notes = @"
