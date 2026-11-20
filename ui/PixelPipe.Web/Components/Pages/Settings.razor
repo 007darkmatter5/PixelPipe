@@ -1,6 +1,8 @@
 @page "/settings"
 @inject LibraryService Library
 @inject EngineClient Engine
+@inject UpdateService Updates
+@inject IJSRuntime Js
 
 <PageTitle>Settings · PixelPipe</PageTitle>
 
@@ -12,9 +14,27 @@
         <MudPaper Class="pa-4" Elevation="0">
             <MudText Typo="Typo.h6">Library</MudText>
             <MudText Typo="Typo.body2">@Library.RomsPath</MudText>
+            @if (!string.IsNullOrWhiteSpace(_unc))
+            {
+                <MudText Typo="Typo.caption">UNC @_unc</MudText>
+            }
+            <MudTextField @bind-Value="_roms" Label="ROM folder" HelperText="Type M:\Games\ROMs or \\server\share. Mapped drives are listed because this app runs as you, not as administrator." Class="mt-2" />
+            <MudStack Row="true" Class="mt-2">
+                <MudButton Variant="Variant.Outlined" OnClick="ShowDrives">Drives</MudButton>
+                <MudButton Variant="Variant.Outlined" OnClick="UpFolder" Disabled="@(_browseParent is null)">Up</MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SaveRoms">Save and rescan</MudButton>
+            </MudStack>
+            @if (_folders is not null)
+            {
+                <MudList T="string" Dense="true" Class="mt-2">
+                    @foreach (var folder in _folders)
+                    {
+                        <MudListItem T="string" OnClick="@(() => OpenFolder(folder.Path))">@folder.Name</MudListItem>
+                    }
+                </MudList>
+            }
             <MudText Typo="Typo.caption" Class="mud-text-secondary">
-                Mount a folder or a UniFi UNAS share here. Identification is the filename plus CRC32.
-                Optional titles live in library.json. Box art is a PNG next to the ROM or under boxart/.
+                Identification is the filename plus CRC32. Optional titles live in library.json.
             </MudText>
         </MudPaper>
     </MudItem>
@@ -30,8 +50,42 @@
                 <MudAlert Severity="Severity.Success" Dense="true">
                     Online · @_health.Version · @(_health.EncoderLabel ?? _health.Encoder ?? "encoder unknown")
                 </MudAlert>
+                @if (!string.IsNullOrWhiteSpace(_health.EncoderDetail))
+                {
+                    <MudText Typo="Typo.body2">@_health.EncoderDetail</MudText>
+                }
             }
             <MudText Typo="Typo.caption">Signaling @Library.EngineUrl. The browser uses @BrowserEngine().</MudText>
+        </MudPaper>
+    </MudItem>
+    <MudItem xs="12">
+        <MudPaper Class="pa-4" Elevation="0">
+            <MudText Typo="Typo.h6">Updates</MudText>
+            <MudText Typo="Typo.body2">Installed @_status.CurrentVersion. Latest: @(_status.LatestVersion ?? "unknown").</MudText>
+            @if (!string.IsNullOrWhiteSpace(_status.Error))
+            {
+                <MudAlert Severity="Severity.Warning" Dense="true" Class="mt-2">@_status.Error</MudAlert>
+            }
+            @if (!string.IsNullOrWhiteSpace(_status.ReleaseNotes))
+            {
+                <MudText Typo="Typo.body2" Class="mt-2" Style="white-space: pre-wrap;">@_status.ReleaseNotes</MudText>
+            }
+            <MudCheckBox T="bool" @bind-Value="_previews" Label="Include preview builds" Class="mt-2" />
+            <MudTextField @bind-Value="_token" Label="GitHub token" InputType="InputType.Password" HelperText="Stored with Windows DPAPI for this user. Leave blank to keep the saved token. Never shown again." Class="mt-2" />
+            <MudStack Row="true" Class="mt-2">
+                <MudButton Variant="Variant.Outlined" OnClick="SaveUpdateSettings">Save</MudButton>
+                <MudButton Variant="Variant.Text" OnClick="ClearToken">Clear token</MudButton>
+                <MudButton Variant="Variant.Outlined" OnClick="CheckNow">Check now</MudButton>
+                @if (_status.CanSelfUpdate && _status.UpdateAvailable)
+                {
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="UpdateNow">Update now</MudButton>
+                }
+            </MudStack>
+            @if (!_status.CanSelfUpdate)
+            {
+                <MudText Typo="Typo.body2" Class="mt-2">This copy runs in Docker. When an update is listed, pull the new image: <code>docker compose pull &amp;&amp; docker compose up -d</code></MudText>
+            }
+            <MudText Typo="Typo.caption">@_status.Phase @( _status.TokenConfigured ? "· token saved" : "· no token")</MudText>
         </MudPaper>
     </MudItem>
     <MudItem xs="12">
@@ -93,9 +147,20 @@
     private EngineHealth? _health;
     private System.Text.Json.JsonElement[]? _encoders;
     private System.Text.Json.JsonElement[]? _cores;
+    private UpdateSnapshot _status = new();
+    private bool _previews = true;
+    private string? _token;
+    private string _roms = "";
+    private string? _unc;
+    private string? _browseParent;
+    private RomFolder.Entry[]? _folders;
 
     protected override async Task OnInitializedAsync()
     {
+        _status = Updates.Snapshot;
+        _previews = _status.IncludePreviews;
+        _roms = Library.RomsPath;
+        _unc = RomFolder.TryUnc(_roms);
         _health = await Engine.HealthAsync();
         var encoders = await Engine.GetAsync("api/encoders");
         if (encoders is { } doc && doc.TryGetProperty("probes", out var probes))
@@ -110,4 +175,85 @@
     }
 
     private string BrowserEngine() => Library.PublicEngineUrl ?? "the page host on port 9090";
+
+    private void ShowDrives()
+    {
+        var listing = RomFolder.List(null);
+        _folders = listing.Entries.ToArray();
+        _browseParent = null;
+    }
+
+    private void OpenFolder(string path)
+    {
+        var listing = RomFolder.List(path);
+        _roms = listing.Path ?? path;
+        _unc = listing.Unc;
+        _browseParent = listing.Parent;
+        _folders = listing.Entries.ToArray();
+    }
+
+    private void UpFolder()
+    {
+        if (_browseParent is null)
+        {
+            ShowDrives();
+            return;
+        }
+
+        OpenFolder(_browseParent);
+    }
+
+    private async Task SaveRoms()
+    {
+        if (string.IsNullOrWhiteSpace(_roms))
+        {
+            return;
+        }
+
+        var saved = RomFolder.Remember(_roms);
+        _roms = saved.Path;
+        _unc = saved.Unc;
+        Library.UseRoms(saved.Path);
+        Library.Get();
+        await Engine.PostAsync("api/library/root", new { path = saved.Path });
+    }
+
+    private async Task SaveUpdateSettings()
+    {
+        Updates.SaveSettings(_previews, _token, clearToken: false);
+        _token = null;
+        await Updates.CheckAsync(CancellationToken.None);
+        _status = Updates.Snapshot;
+    }
+
+    private async Task ClearToken()
+    {
+        Updates.SaveSettings(_previews, null, clearToken: true);
+        _token = null;
+        _status = Updates.Snapshot;
+    }
+
+    private async Task CheckNow()
+    {
+        await Updates.CheckAsync(CancellationToken.None);
+        _status = Updates.Snapshot;
+    }
+
+    private async Task UpdateNow()
+    {
+        var confirm = await Js.InvokeAsync<bool>("confirm", "Install the update and restart PixelPipe on this computer?");
+        if (!confirm)
+        {
+            return;
+        }
+
+        try
+        {
+            await Js.InvokeVoidAsync("pixelpipeApplyUpdate", true);
+        }
+        catch
+        {
+            _status = Updates.Snapshot;
+        }
+    }
 }

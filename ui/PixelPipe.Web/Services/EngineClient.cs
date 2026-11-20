@@ -26,6 +26,19 @@ public sealed class EngineClient
         }
     }
 
+    public async Task PostAsync(string path, object body, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var client = _http.CreateClient("engine");
+            using var response = await client.PostAsJsonAsync(path, body, cancellationToken);
+        }
+        catch
+        {
+            // The library page still rescans from the saved config if the engine is down.
+        }
+    }
+
     public async Task<JsonElement?> GetAsync(string path, CancellationToken cancellationToken = default)
     {
         try
@@ -55,4 +68,7 @@ public sealed class EngineHealth
 
     [JsonPropertyName("encoder_label")]
     public string? EncoderLabel { get; set; }
+
+    [JsonPropertyName("encoder_detail")]
+    public string? EncoderDetail { get; set; }
 }

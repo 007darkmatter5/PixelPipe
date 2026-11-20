@@ -23,6 +23,30 @@ pub struct AppState {
 }
 
 pub async fn serve(config: Config) -> anyhow::Result<()> {
+    serve_with_shutdown(config, shutdown_signal()).await
+}
+
+pub async fn serve_with_shutdown<F>(config: Config, shutdown: F) -> anyhow::Result<()>
+where
+    F: std::future::Future<Output = ()> + Send + 'static,
+{
+    let mut ui = if config.spawn_ui {
+        spawn_bundled_ui(&config)
+    } else {
+        None
+    };
+    let result = serve_inner(config, shutdown).await;
+    if let Some(child) = ui.as_mut() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    result
+}
+
+async fn serve_inner<F>(config: Config, shutdown: F) -> anyhow::Result<()>
+where
+    F: std::future::Future<Output = ()> + Send + 'static,
+{
     config.ensure_dirs()?;
     let report = probe();
     for item in &report.probes {
@@ -33,7 +57,8 @@ pub async fn serve(config: Config) -> anyhow::Result<()> {
         }
     }
     tracing::info!(
-        selected = ?report.selected,
+        selected = report.selected.map(|kind| kind.ffmpeg_name()),
+        detail = report.selected_detail.as_deref().unwrap_or(""),
         "encoder preference is NVENC, Quick Sync, VAAPI, AMF, then libx264"
     );
     let state = AppState {
@@ -46,6 +71,7 @@ pub async fn serve(config: Config) -> anyhow::Result<()> {
     let app = Router::new()
         .route("/api/health", get(health))
         .route("/api/library", get(library))
+        .route("/api/library/root", axum::routing::post(library_root))
         .route("/api/encoders", get(encoders))
         .route("/api/cores", get(cores))
         .route(
@@ -70,7 +96,7 @@ pub async fn serve(config: Config) -> anyhow::Result<()> {
     tracing::info!(%bind, "PixelPipe engine listening");
     axum::serve(listener, app)
         .with_graceful_shutdown(async move {
-            let _ = shutdown_signal().await;
+            shutdown.await;
             tracing::info!("shutting down");
             state.sessions.shutdown().await;
         })
@@ -98,21 +124,73 @@ async fn shutdown_signal() {
     }
 }
 
+/// Start `PixelPipe.Web.exe` when it was installed beside the engine.
+/// Docker and a source checkout do not have that file, so they keep starting
+/// the UI themselves.
+pub fn spawn_bundled_ui(config: &Config) -> Option<std::process::Child> {
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?;
+    let ui = dir.join("PixelPipe.Web.exe");
+    if !ui.is_file() {
+        return None;
+    }
+    tracing::info!(path = %ui.display(), "starting bundled web UI");
+    let mut cmd = std::process::Command::new(&ui);
+    cmd.env("PixelPipe__RomsPath", &config.roms)
+        .env("PixelPipe__EngineUrl", "http://127.0.0.1:9090")
+        .env("ASPNETCORE_URLS", "http://0.0.0.0:8080")
+        .env("ASPNETCORE_ENVIRONMENT", "Production")
+        .current_dir(dir);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // CREATE_NO_WINDOW. The web host is also a WinExe, so a service
+        // start does not open a Kestrel console.
+        cmd.creation_flags(0x0800_0000);
+    }
+    match cmd.spawn() {
+        Ok(child) => Some(child),
+        Err(err) => {
+            tracing::warn!(%err, "could not start the web UI");
+            None
+        }
+    }
+}
+
 async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
     Json(serde_json::json!({
         "ok": true,
         "version": env!("CARGO_PKG_VERSION"),
         "encoder": state.encoders.selected.map(|k| k.ffmpeg_name()),
         "encoder_label": state.encoders.selected_label,
+        "encoder_detail": state.encoders.selected_detail,
     }))
 }
 
 async fn library(State(state): State<AppState>) -> Result<Json<serde_json::Value>, ApiError> {
     let games = state.library.games()?;
     Ok(Json(serde_json::json!({
-        "roms_path": state.config.roms,
+        "roms_path": state.library.root(),
         "games": games,
     })))
+}
+
+async fn library_root(
+    State(state): State<AppState>,
+    Json(body): Json<LibraryRootBody>,
+) -> Result<StatusCode, ApiError> {
+    let path = body.path.trim();
+    if path.is_empty() {
+        return Err(ApiError::bad("rom path is empty"));
+    }
+    state.library.set_root(std::path::PathBuf::from(path));
+    tracing::info!(path, "library root updated");
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+struct LibraryRootBody {
+    path: String,
 }
 
 async fn encoders(State(state): State<AppState>) -> Json<EncoderReport> {
@@ -249,6 +327,13 @@ struct ApiError {
 }
 
 impl ApiError {
+    fn bad(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::BAD_REQUEST,
+            message: message.into(),
+        }
+    }
+
     fn not_found(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::NOT_FOUND,

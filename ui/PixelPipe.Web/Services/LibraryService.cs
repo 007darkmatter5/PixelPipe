@@ -1,5 +1,3 @@
-using System.Buffers.Binary;
-using System.IO.Hashing;
 using System.Text.Json;
 using PixelPipe.Web.Models;
 
@@ -11,6 +9,7 @@ public sealed class LibraryService
     private readonly IWebHostEnvironment _env;
     private readonly object _gate = new();
     private LibrarySnapshot? _cache;
+    private string? _romsOverride;
 
     public LibraryService(IConfiguration config, IWebHostEnvironment env)
     {
@@ -22,8 +21,20 @@ public sealed class LibraryService
     {
         get
         {
+            if (!string.IsNullOrWhiteSpace(_romsOverride))
+            {
+                return _romsOverride;
+            }
+
+            var fromFile = ReadSavedRoms();
+            if (!string.IsNullOrWhiteSpace(fromFile))
+            {
+                return fromFile;
+            }
+
             var configured = _config["PixelPipe:RomsPath"] ?? "roms";
-            if (Path.IsPathRooted(configured) && Directory.Exists(configured))
+            // Keep UNC and other absolute paths even when the share is briefly unreachable.
+            if (Path.IsPathRooted(configured) || configured.StartsWith(@"\\", StringComparison.Ordinal))
             {
                 return configured;
             }
@@ -47,6 +58,43 @@ public sealed class LibraryService
         {
             var value = _config["PixelPipe:PublicEngineUrl"];
             return string.IsNullOrWhiteSpace(value) ? null : value.TrimEnd('/');
+        }
+    }
+
+    private static string? ReadSavedRoms()
+    {
+        var file = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+            "PixelPipe",
+            "config.json");
+        if (!File.Exists(file))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(File.ReadAllText(file));
+            if (!doc.RootElement.TryGetProperty("roms", out var roms))
+            {
+                return null;
+            }
+
+            var value = roms.GetString();
+            return string.IsNullOrWhiteSpace(value) ? null : value;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    public void UseRoms(string path)
+    {
+        lock (_gate)
+        {
+            _romsOverride = path;
+            _cache = null;
         }
     }
 
@@ -101,72 +149,23 @@ public sealed class LibraryService
             """;
     }
 
+    public string? BundledPath
+    {
+        get
+        {
+            var installed = Path.Combine(_env.ContentRootPath, "demo-roms");
+            return Directory.Exists(installed) ? installed : null;
+        }
+    }
+
     private LibrarySnapshot Scan()
     {
         var root = RomsPath;
-        var meta = LoadMeta(Path.Combine(root, "library.json"));
-        var games = new List<GameEntry>();
-        if (Directory.Exists(root))
+        var games = Collect(root, root, "");
+        var bundled = BundledPath;
+        if (bundled is not null)
         {
-            foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
-            {
-                var ext = Path.GetExtension(file).TrimStart('.').ToLowerInvariant();
-                var systemId = ext switch
-                {
-                    "nes" or "unf" or "unif" => "nes",
-                    "sfc" or "smc" => "snes",
-                    "md" or "gen" or "smd" => "genesis",
-                    _ => null,
-                };
-                if (systemId is null)
-                {
-                    continue;
-                }
-
-                // `.md` is both Markdown and Mega Drive. A text file is documentation.
-                if (ext == "md" && LooksLikeText(file))
-                {
-                    continue;
-                }
-
-                var relative = Path.GetRelativePath(root, file).Replace('\\', '/');
-                var (crc, romCrc, bytes) = HashRom(file, systemId == "nes");
-                var stem = Path.GetFileNameWithoutExtension(file);
-                var title = Prettify(stem);
-                int? year = null;
-                string? developer = null;
-                string? description = null;
-                if (meta.TryGetValue(relative, out var entry))
-                {
-                    if (!string.IsNullOrWhiteSpace(entry.Title))
-                    {
-                        title = entry.Title!;
-                    }
-                    year = entry.Year;
-                    developer = entry.Developer;
-                    description = entry.Description;
-                }
-
-                games.Add(new GameEntry
-                {
-                    RelativePath = relative,
-                    Title = title,
-                    System = systemId switch
-                    {
-                        "snes" => "SNES",
-                        "genesis" => "Genesis",
-                        _ => "NES",
-                    },
-                    SystemId = systemId,
-                    Crc32 = crc,
-                    RomCrc32 = romCrc,
-                    BoxArtFile = FindBoxArt(root, file, stem, crc),
-                    Year = year,
-                    Developer = developer,
-                    Description = description,
-                    Bytes = bytes,
-                });
-            }
+            games.AddRange(Collect(bundled, bundled, "bundled"));
         }
 
         games.Sort((a, b) =>
@@ -180,6 +179,62 @@ public sealed class LibraryService
             Games = games,
             ScannedAt = DateTimeOffset.UtcNow,
         };
+    }
+
+    private static List<GameEntry> Collect(string libraryRoot, string scanRoot, string prefix)
+    {
+        var meta = LoadMeta(Path.Combine(scanRoot, "library.json"));
+        var games = new List<GameEntry>();
+        foreach (var found in RomScanner.Scan(scanRoot, prefix))
+        {
+            var metaKey = string.IsNullOrEmpty(prefix)
+                ? found.RelativePath
+                : found.RelativePath[(prefix.Length + 1)..];
+            var hashIndex = metaKey.IndexOf('#');
+            if (hashIndex >= 0)
+            {
+                metaKey = metaKey[..hashIndex];
+            }
+
+            var title = found.Title;
+            int? year = null;
+            string? developer = null;
+            string? description = null;
+            if (meta.TryGetValue(metaKey, out var entry))
+            {
+                if (!string.IsNullOrWhiteSpace(entry.Title))
+                {
+                    title = entry.Title!;
+                }
+
+                year = entry.Year;
+                developer = entry.Developer;
+                description = entry.Description;
+            }
+
+            var stem = Path.GetFileNameWithoutExtension(found.FullPath);
+            games.Add(new GameEntry
+            {
+                RelativePath = found.RelativePath,
+                Title = title,
+                System = found.SystemId switch
+                {
+                    "snes" => "SNES",
+                    "genesis" => "Genesis",
+                    _ => "NES",
+                },
+                SystemId = found.SystemId,
+                Crc32 = found.Crc32,
+                RomCrc32 = found.RomCrc32,
+                BoxArtFile = FindBoxArt(libraryRoot, found.FullPath, stem, found.Crc32),
+                Year = year,
+                Developer = developer,
+                Description = description,
+                Bytes = found.Bytes,
+            });
+        }
+
+        return games;
     }
 
     private static string? FindBoxArt(string root, string romFile, string stem, string crc)
@@ -223,71 +278,6 @@ public sealed class LibraryService
             return new Dictionary<string, MetaEntry>(StringComparer.OrdinalIgnoreCase);
         }
     }
-
-    private static (string Full, string? Body, long Bytes) HashRom(string path, bool nes)
-    {
-        using var stream = File.OpenRead(path);
-        var full = new Crc32();
-        var body = new Crc32();
-        var header = new byte[16];
-        var read = stream.Read(header, 0, header.Length);
-        full.Append(header.AsSpan(0, read));
-        var ines = nes && read == 16 && header[0] == (byte)'N' && header[1] == (byte)'E' && header[2] == (byte)'S' && header[3] == 0x1a;
-        var buffer = new byte[64 * 1024];
-        long total = read;
-        int n;
-        while ((n = stream.Read(buffer)) > 0)
-        {
-            full.Append(buffer.AsSpan(0, n));
-            if (ines)
-            {
-                body.Append(buffer.AsSpan(0, n));
-            }
-            total += n;
-        }
-
-        return (Hex(full), ines ? Hex(body) : null, total);
-    }
-
-    private static string Hex(Crc32 crc)
-    {
-        var hash = crc.GetCurrentHash();
-        var value = hash.Length >= 4 ? BinaryPrimitives.ReadUInt32LittleEndian(hash) : 0;
-        return value.ToString("x8");
-    }
-
-    private static bool LooksLikeText(string path)
-    {
-        try
-        {
-            var buffer = new byte[256];
-            using var stream = File.OpenRead(path);
-            var read = stream.Read(buffer, 0, buffer.Length);
-            if (read == 0)
-            {
-                return false;
-            }
-
-            for (var i = 0; i < read; i++)
-            {
-                var b = buffer[i];
-                var printable = b is >= 32 and < 127 || b is (byte)'\n' or (byte)'\r' or (byte)'\t';
-                if (!printable)
-                {
-                    return false;
-                }
-            }
-
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
-    private static string Prettify(string stem) =>
-        string.Join(' ', stem.Replace('_', ' ').Split(' ', StringSplitOptions.RemoveEmptyEntries));
 
     private sealed class MetaFile
     {
