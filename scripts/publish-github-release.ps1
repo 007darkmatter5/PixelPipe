@@ -31,6 +31,18 @@ NVENC on a real NVIDIA GPU, and this installer on a real Windows 11 desktop, sti
 SHA256 is in PixelPipe-Setup.exe.sha256.
 "@
 }
+elseif ($tag -eq 'v0.2.1-preview') {
+    $title = 'PixelPipe 0.2.1 preview (Windows)'
+    $notes = @"
+Fixes the installer crash (Inno Setup runtime error Type mismatch) that appeared as soon as the wizard opened.
+
+NES, SNES, and Genesis play end to end, including save states. NVENC is selected automatically when the NVIDIA encoder opens, and the fallback chain remains in place. The installer accepts a UNC ROM folder such as \\unas-pro\roms and can start PixelPipe when you sign in.
+
+The silent install is exercised on the GitHub Windows runner. NVENC on a real NVIDIA GPU still needs verification.
+
+SHA256 is in PixelPipe-Setup.exe.sha256.
+"@
+}
 else {
     $title = "PixelPipe $tag"
     $notes = @"

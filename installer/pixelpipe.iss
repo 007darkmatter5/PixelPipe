@@ -1,7 +1,7 @@
 ; PixelPipe Windows installer. Build it with scripts\build-windows.ps1.
 
 #define MyAppName "PixelPipe"
-#define MyAppVersion "0.2.0"
+#define MyAppVersion "0.2.1"
 #define MyAppPublisher "PixelPipe"
 
 [Setup]
@@ -16,8 +16,8 @@ OutputDir=..\dist
 OutputBaseFilename=PixelPipe-Setup
 Compression=lzma2
 SolidCompression=yes
-ArchitecturesAllowed=x64
-ArchitecturesInstallIn64BitMode=x64
+ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=admin
 WizardStyle=modern
 
@@ -48,31 +48,48 @@ begin
   RomsPage := CreateInputQueryPage(wpSelectTasks,
     'ROM folder',
     'Where should PixelPipe look for ROMs?',
-    'Leave this blank to play the bundled demo ROMs. A UNC path such as \\unas-pro\roms is accepted. Your ROMs are not copied.');
-  RomsPage.Add('ROM folder:', '');
+    'Leave this blank to play the bundled demo ROMs. A UNC path such as \\unas-pro\roms is accepted. Your ROMs are not copied. A silent install can pass /ROMDIR=C:\roms instead.');
+  { The second argument is "password edit", not a default value. }
+  RomsPage.Add('ROM folder:', False);
 end;
 
 function JsonQuote(const S: String): String;
 var
   I: Integer;
+  C: String;
 begin
   Result := '"';
   for I := 1 to Length(S) do
   begin
-    if S[I] = '\' then
+    { Copy returns a string. S[I] is a Char, and Pascal Script rejects
+      Char-to-String comparisons and concatenation at runtime. }
+    C := Copy(S, I, 1);
+    if C = '\' then
       Result := Result + '\\'
-    else if S[I] = '"' then
+    else if C = '"' then
       Result := Result + '\"'
     else
-      Result := Result + S[I];
+      Result := Result + C;
   end;
   Result := Result + '"';
 end;
 
 function ChosenRoms: String;
+var
+  FromParam, FromPage: String;
 begin
-  Result := Trim(RomsPage.Values[0]);
-  if Result = '' then
+  FromParam := Trim(ExpandConstant('{param:ROMDIR|}'));
+  if FromParam <> '' then
+  begin
+    Result := FromParam;
+    Exit;
+  end;
+  FromPage := '';
+  if RomsPage <> nil then
+    FromPage := Trim(RomsPage.Values[0]);
+  if FromPage <> '' then
+    Result := FromPage
+  else
     Result := ExpandConstant('{app}\demo-roms');
 end;
 
