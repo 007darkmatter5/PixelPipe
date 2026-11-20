@@ -83,7 +83,7 @@ internal sealed class TrayApplication : ApplicationContext
         try
         {
             using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
-            using var response = await client.PostAsync("http://127.0.0.1:8080/api/app/update/check", content: null);
+            using var response = await client.PostAsync("http://127.0.0.1:8080/api/app/update/check", new StringContent(""));
             if (!response.IsSuccessStatusCode)
             {
                 return;

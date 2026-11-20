@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using PixelPipe.Web.Services;
+using Xunit;
 
 namespace PixelPipe.Web.Tests;
 

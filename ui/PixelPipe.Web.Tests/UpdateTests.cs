@@ -1,4 +1,5 @@
 using PixelPipe.Web.Services;
+using Xunit;
 
 namespace PixelPipe.Web.Tests;
 
