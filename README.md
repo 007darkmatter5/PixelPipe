@@ -65,7 +65,7 @@ This environment has no NVIDIA GPU and is not Windows. The following are impleme
 ### Windows 11 (native, no Docker)
 
 1. Download [PixelPipe-Setup.exe](https://github.com/007darkmatter5/PixelPipe/releases/download/v0.2.1-preview/PixelPipe-Setup.exe) from the [v0.2.1-preview release](https://github.com/007darkmatter5/PixelPipe/releases/tag/v0.2.1-preview). `PixelPipe-Setup.exe.sha256` on that release is the checksum. The 0.2.0 preview installer crashes as soon as the wizard opens. Building it yourself is `scripts\build-windows.ps1` (Rust MSVC toolchain, .NET 8 SDK, CMake, LLVM, Inno Setup 6). The script downloads FFmpeg 6.1.1 shared builds, because the engine's FFmpeg bindings do not parse FFmpeg 7 or newer. It also sets `CMAKE_POLICY_VERSION_MINIMUM=3.5` so CMake 4 can still compile the bundled Opus sources. Pushing a `v*` tag publishes the next pre-release.
-2. Run the installer. Leave **Start PixelPipe when you sign in** selected if the ROMs are on `\\unas-pro\roms`. That starts the engine in the background when you sign in (no console window). LocalSystem, which is what the Windows service uses, usually cannot see a passworded share. Choose the service only for a local disk, or later point it at your account:
+2. Run the installer. Leave **Start PixelPipe when you sign in** selected if the ROMs are on `\\unas-pro\roms`. That is the default. PixelPipe then sits in the notification area: Open PixelPipe, Open log folder, Restart, and Quit. There is no console window. LocalSystem, which is what the Windows service uses, usually cannot see a passworded share. Choose the service only for a local disk, or later point it at your account:
 
    ```bat
    sc config PixelPipe obj= ".\YourUser" password= "YourPassword"
@@ -73,7 +73,7 @@ This environment has no NVIDIA GPU and is not Windows. The following are impleme
    sc start PixelPipe
    ```
 
-3. On the ROM folder page, enter `\\unas-pro\roms` (or leave it blank to use the three demo ROMs installed under `demo-roms`).
+3. On the ROM folder page, browse to a folder or paste `\\unas-pro\roms`. Leave it blank to use the three demo ROMs installed under `demo-roms`. The installer does not create that folder.
 4. Leave the firewall task selected. It allows TCP 8080, TCP 9090, and UDP 50000–50100.
 5. Open `http://127.0.0.1:8080` on the desktop, or `http://<desktop-lan-ip>:8080` from another device. Play **PixelPipe Test**, **PixelPipe SNES Test**, and **PixelPipe Genesis Test**. Click the video. Right (or the D-pad) moves the yellow cursor. Z is B, X is A, Enter is Start, Shift is Select.
 6. Confirm the encoder on the settings page. A working GPU shows **NVIDIA NVENC** and a profile such as `p1-ull`, `llhp`, `fast`, or `defaults`. The same line is in `%ProgramData%\PixelPipe\pixelpipe.log` as `opened H.264 encoder` with `encoder=h264_nvenc`. `nvidia-smi` should already succeed before you expect NVENC to. If the row says skipped, the detail text is the FFmpeg error; a current Game Ready or Studio driver is what supplies `nvcuda.dll` and `nvEncodeAPI64.dll`, and those DLLs are not part of the installer.
@@ -124,7 +124,7 @@ The HUD prints encode time, data-channel RTT, jitter-buffer delay, decode time, 
 
 ## Library
 
-The scanner walks the ROM folder (up to 12 levels). A game's identity is its path, a CRC32 of the file, and, for iNES files, a second CRC32 of the ROM with the 16-byte header removed. `roms/library.json` overrides title, developer, year, and description. Box art is `<rom>.png` beside the file, `boxart/<name>.png`, or `boxart/<crc32>.png`. Anything else gets a generated poster.
+The scanner walks the ROM folder (up to 12 levels), including subfolders. Extensions are `.nes`, `.sfc`, `.smc`, `.md`, `.gen`, `.smd`, `.bin`, and `.zip` (the largest ROM inside the archive). `.bin` files take their system from a parent folder named NES, SNES, Genesis, or Mega Drive. The three bundled test ROMs stay in the library even when the configured folder is empty; they are listed under Homebrew. A game's identity is its path, a CRC32 of the file, and, for iNES files, a second CRC32 of the ROM with the 16-byte header removed. `roms/library.json` overrides title, developer, year, and description. Box art is `<rom>.png` beside the file, `boxart/<name>.png`, or `boxart/<crc32>.png`. Anything else gets a generated poster.
 
 SRAM (when the core exposes it) is written to `data/saves/<crc32>.srm` on session stop and restored on the next launch. One save state per ROM is `data/saves/<crc32>.state`.
 

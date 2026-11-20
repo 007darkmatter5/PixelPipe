@@ -58,6 +58,10 @@ try {
     }
     dotnet publish ui/PixelPipe.Web/PixelPipe.Web.csproj -c Release -r win-x64 --self-contained true -p:PublishReadyToRun=false -o $stage
     if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed ($LASTEXITCODE)" }
+    $trayOut = Join-Path $Root 'dist\tray-publish'
+    dotnet publish ui/PixelPipe.Tray/PixelPipe.Tray.csproj -c Release -r win-x64 --self-contained true -p:PublishReadyToRun=false -o $trayOut
+    if ($LASTEXITCODE -ne 0) { throw "tray publish failed ($LASTEXITCODE)" }
+    Copy-Item (Join-Path $trayOut 'PixelPipe.Tray.exe') $stage
     Copy-Item (Join-Path $Root 'engine\target\release\pixelpipe-engine.exe') $stage
     Copy-Item (Join-Path $ffmpeg 'bin\*.dll') $stage
     $coresDest = Join-Path $stage 'cores'

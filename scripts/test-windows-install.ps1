@@ -10,7 +10,8 @@ $InstallDir = 'C:\Program Files\PixelPipe'
 $ConfigPath = 'C:\ProgramData\PixelPipe\config.json'
 
 function Stop-PixelPipe {
-    foreach ($name in @('pixelpipe-engine', 'PixelPipe.Web')) {
+    # Stop the tray first so it does not restart the children it supervises.
+    foreach ($name in @('PixelPipe.Tray', 'PixelPipe.Web', 'pixelpipe-engine')) {
         Get-Process -Name $name -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     }
     Start-Sleep -Seconds 2
@@ -61,8 +62,10 @@ if (Test-Path $Log) {
 
 $engine = Join-Path $InstallDir 'pixelpipe-engine.exe'
 $ui = Join-Path $InstallDir 'PixelPipe.Web.exe'
+$tray = Join-Path $InstallDir 'PixelPipe.Tray.exe'
 if (-not (Test-Path $engine)) { Show-InstallLog; throw "missing $engine" }
 if (-not (Test-Path $ui)) { throw "missing $ui" }
+if (-not (Test-Path $tray)) { throw "missing $tray" }
 if (-not (Test-Path (Join-Path $InstallDir 'cores\fceumm_libretro.dll'))) { throw 'NES core was not installed' }
 if (-not (Test-Path $ConfigPath)) { throw "missing $ConfigPath" }
 

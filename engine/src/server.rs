@@ -140,6 +140,13 @@ pub fn spawn_bundled_ui(config: &Config) -> Option<std::process::Child> {
         .env("ASPNETCORE_URLS", "http://0.0.0.0:8080")
         .env("ASPNETCORE_ENVIRONMENT", "Production")
         .current_dir(dir);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // CREATE_NO_WINDOW. The web host is also a WinExe, so a service
+        // start does not open a Kestrel console.
+        cmd.creation_flags(0x0800_0000);
+    }
     match cmd.spawn() {
         Ok(child) => Some(child),
         Err(err) => {

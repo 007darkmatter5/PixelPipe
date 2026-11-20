@@ -31,9 +31,16 @@ Name: firewall; Description: "Open the firewall for the web UI (TCP 8080), the e
 
 [Icons]
 Name: "{group}\PixelPipe"; Filename: "{app}\PixelPipe.url"
-Name: "{userstartup}\PixelPipe"; Filename: "{app}\pixelpipe-engine.exe"; Tasks: startup
+Name: "{userstartup}\PixelPipe"; Filename: "{app}\PixelPipe.Tray.exe"; Tasks: startup
+
+[Run]
+Filename: "{app}\PixelPipe.Tray.exe"; Description: "Start PixelPipe"; Flags: nowait postinstall skipifsilent; Tasks: startup
+Filename: "http://127.0.0.1:8080"; Description: "Open PixelPipe in the browser"; Flags: shellexec postinstall skipifsilent unchecked nowait
 
 [UninstallRun]
+Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM PixelPipe.Tray.exe /T"; Flags: runhidden; RunOnceId: "StopPixelPipeTray"
+Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM PixelPipe.Web.exe /T"; Flags: runhidden; RunOnceId: "StopPixelPipeWeb"
+Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM pixelpipe-engine.exe /T"; Flags: runhidden; RunOnceId: "StopPixelPipeEngine"
 Filename: "{app}\pixelpipe-engine.exe"; Parameters: "--uninstall-service"; Flags: runhidden; RunOnceId: "RemovePixelPipeService"
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""PixelPipe UI"""; Flags: runhidden
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""PixelPipe Engine"""; Flags: runhidden
@@ -41,16 +48,55 @@ Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=
 
 [Code]
 var
-  RomsPage: TInputQueryWizardPage;
+  RomsPage: TWizardPage;
+  RomsEdit: TNewEdit;
+
+{ CreateInputDirPage refuses a missing folder and offers to create it.
+  A blank path and a UNC share such as \\unas-pro\roms must both be allowed,
+  and the installer must not create the folder. }
+procedure BrowseRomsClick(Sender: TObject);
+var
+  Dir: String;
+begin
+  Dir := Trim(RomsEdit.Text);
+  if BrowseForFolder('Select the ROM folder. Network locations are listed here, or paste a path such as \\unas-pro\roms.', Dir, False) then
+    RomsEdit.Text := Dir;
+end;
 
 procedure InitializeWizard;
+var
+  Prompt: TNewStaticText;
+  Browse: TNewButton;
 begin
-  RomsPage := CreateInputQueryPage(wpSelectTasks,
+  RomsPage := CreateCustomPage(wpSelectTasks,
     'ROM folder',
-    'Where should PixelPipe look for ROMs?',
-    'Leave this blank to play the bundled demo ROMs. A UNC path such as \\unas-pro\roms is accepted. Your ROMs are not copied. A silent install can pass /ROMDIR=C:\roms instead.');
-  { The second argument is "password edit", not a default value. }
-  RomsPage.Add('ROM folder:', False);
+    'Where should PixelPipe look for ROMs?');
+
+  Prompt := TNewStaticText.Create(RomsPage);
+  Prompt.Parent := RomsPage.Surface;
+  Prompt.Caption := 'Leave this blank to play the bundled demo ROMs. Browse, or paste a UNC path such as \\unas-pro\roms. PixelPipe does not create the folder and does not copy your ROMs.';
+  Prompt.AutoSize := False;
+  Prompt.WordWrap := True;
+  Prompt.Left := 0;
+  Prompt.Top := 0;
+  Prompt.Width := RomsPage.SurfaceWidth;
+  Prompt.Height := ScaleY(64);
+
+  RomsEdit := TNewEdit.Create(RomsPage);
+  RomsEdit.Parent := RomsPage.Surface;
+  RomsEdit.Left := 0;
+  RomsEdit.Top := Prompt.Top + Prompt.Height + ScaleY(8);
+  RomsEdit.Width := RomsPage.SurfaceWidth - ScaleX(96);
+  RomsEdit.Text := '';
+
+  Browse := TNewButton.Create(RomsPage);
+  Browse.Parent := RomsPage.Surface;
+  Browse.Caption := 'Browse...';
+  Browse.Left := RomsEdit.Left + RomsEdit.Width + ScaleX(8);
+  Browse.Top := RomsEdit.Top - ScaleY(1);
+  Browse.Width := ScaleX(88);
+  Browse.Height := ScaleY(25);
+  Browse.OnClick := @BrowseRomsClick;
 end;
 
 function JsonQuote(const S: String): String;
@@ -85,8 +131,8 @@ begin
     Exit;
   end;
   FromPage := '';
-  if RomsPage <> nil then
-    FromPage := Trim(RomsPage.Values[0]);
+  if RomsEdit <> nil then
+    FromPage := Trim(RomsEdit.Text);
   if FromPage <> '' then
     Result := FromPage
   else
@@ -130,8 +176,9 @@ begin
     Exec(App + '\pixelpipe-engine.exe', '--install-service', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
     Exec(ExpandConstant('{sys}\sc.exe'), 'start PixelPipe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   end
-  else if WizardIsTaskSelected('startup') then
+  else if WizardIsTaskSelected('startup') and WizardSilent then
   begin
-    Exec(App + '\pixelpipe-engine.exe', '', '', SW_HIDE, ewNoWait, ResultCode);
+    { Interactive installs use the finish-page checkbox, which starts the tray. }
+    Exec(App + '\PixelPipe.Tray.exe', '', '', SW_HIDE, ewNoWait, ResultCode);
   end;
 end;

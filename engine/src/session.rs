@@ -31,7 +31,7 @@ use webrtc::track::track_local::track_local_static_sample::TrackLocalStaticSampl
 use webrtc::track::track_local::TrackLocal;
 
 use crate::audio::AudioPipe;
-use crate::config::{resolve_rom, Config};
+use crate::config::Config;
 use crate::encoder::{EncoderKind, H264Encoder};
 use crate::library::{Game, Library, System};
 use crate::libretro::{Core, VideoFrame};
@@ -302,7 +302,7 @@ async fn spawn_session(
         .find(|g| g.file == rom_rel.trim_start_matches(['/', '\\']))
         .cloned()
         .context("ROM is not in the library")?;
-    let rom_path = resolve_rom(library.root(), &game.file)?;
+    let rom_path = library.materialize(&game.file, &config.data.join("cache"))?;
     let core_path = config.core_path(game.system);
     if !core_path.is_file() {
         anyhow::bail!(

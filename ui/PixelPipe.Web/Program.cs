@@ -1,7 +1,25 @@
+using Microsoft.Extensions.Logging;
 using MudBlazor.Services;
 using PixelPipe.Web.Services;
 
 var builder = WebApplication.CreateBuilder(args);
+AddFileLog(builder.Logging);
+
+static void AddFileLog(ILoggingBuilder logging)
+{
+    try
+    {
+        var dir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+            "PixelPipe");
+        Directory.CreateDirectory(dir);
+        logging.AddProvider(new PixelPipe.Web.AppendFileLogger(Path.Combine(dir, "pixelpipe-web.log")));
+    }
+    catch
+    {
+        // A read-only machine can still log to the console.
+    }
+}
 
 builder.Services.AddRazorComponents().AddInteractiveServerComponents();
 builder.Services.AddMudServices();
