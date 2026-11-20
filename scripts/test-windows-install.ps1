@@ -46,17 +46,20 @@ function Wait-PixelPipeUi {
 }
 
 function Get-PixelPipeUninstallKeys {
-    $roots = @(
-        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
-        'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall'
-    )
+    # PowerShell's registry provider treats {GUID} as a wildcard, so Get-ChildItem
+    # skips Inno's uninstall key. The .NET registry API reads the name literally.
     $found = @()
-    foreach ($root in $roots) {
-        if (-not (Test-Path $root)) { continue }
-        foreach ($key in Get-ChildItem $root) {
-            $prop = Get-ItemProperty $key.PSPath
-            if ($prop.DisplayName -eq 'PixelPipe') {
-                $found += $key.PSPath
+    foreach ($view in @([Microsoft.Win32.RegistryView]::Registry64, [Microsoft.Win32.RegistryView]::Registry32)) {
+        $base = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::LocalMachine, $view)
+        $uninstall = $base.OpenSubKey('SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall')
+        if (-not $uninstall) { continue }
+        foreach ($name in $uninstall.GetSubKeyNames()) {
+            $sub = $uninstall.OpenSubKey($name)
+            if (-not $sub) { continue }
+            $display = [string]$sub.GetValue('DisplayName')
+            $remove = [string]$sub.GetValue('UninstallString')
+            if ($display -eq 'PixelPipe' -or $remove -match '\\PixelPipe\\unins\d+\.exe') {
+                $found += "$view\$name"
             }
         }
     }
@@ -126,7 +129,7 @@ Write-Host 'UI responded on http://127.0.0.1:8080'
 
 $installed = @(Get-PixelPipeUninstallKeys)
 if ($installed.Count -ne 1) {
-    throw "expected one Add/Remove Programs entry after install, found $($installed.Count)"
+    throw "expected one Add/Remove Programs entry after install, found $($installed.Count): $($installed -join ', ')"
 }
 
 $saveDir = 'C:\ProgramData\PixelPipe\saves'
@@ -162,7 +165,7 @@ if ($cfg2.roms -ne $Roms) { throw "upgrade changed roms to '$($cfg2.roms)'" }
 if ((Get-Content $sentinel -Raw).Trim() -ne 'keep') { throw 'save sentinel was removed by the upgrade' }
 $after = @(Get-PixelPipeUninstallKeys)
 if ($after.Count -ne 1) {
-    throw "upgrade left $($after.Count) Add/Remove Programs entries"
+    throw "upgrade left $($after.Count) Add/Remove Programs entries: $($after -join ', ')"
 }
 Write-Host "upgrade kept roms=$($cfg2.roms) and one uninstall entry"
 Wait-PixelPipeUi
