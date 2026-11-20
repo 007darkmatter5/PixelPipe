@@ -4,6 +4,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>PixelPipe.Web</RootNamespace>
+    <Version>0.2.1</Version>
   </PropertyGroup>
   <!-- The Windows publish must not open a console. Docker keeps the console host. -->
   <PropertyGroup Condition="$(RuntimeIdentifier.StartsWith('win'))">
@@ -12,5 +13,6 @@
   <ItemGroup>
     <PackageReference Include="MudBlazor" Version="8.15.0" />
     <PackageReference Include="System.IO.Hashing" Version="8.0.0" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
   </ItemGroup>
 </Project>

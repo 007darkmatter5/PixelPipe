@@ -11,8 +11,12 @@ public sealed class RomScannerTests
         var root = Path.Combine(Path.GetTempPath(), "pixelpipe-csharp-scan-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(Path.Combine(root, "consoles", "SNES", "usa"));
         Directory.CreateDirectory(Path.Combine(root, "Mega Drive"));
+        Directory.CreateDirectory(Path.Combine(root, "nes"));
+        Directory.CreateDirectory(Path.Combine(root, "md"));
         File.WriteAllBytes(Path.Combine(root, "consoles", "SNES", "usa", "demo.bin"), [1, 2, 3]);
         File.WriteAllBytes(Path.Combine(root, "Mega Drive", "sonic.bin"), [4, 5]);
+        File.WriteAllBytes(Path.Combine(root, "nes", "mario.bin"), [6]);
+        File.WriteAllBytes(Path.Combine(root, "md", "streets.bin"), [7]);
         var zipPath = Path.Combine(root, "packs", "favorites.zip");
         Directory.CreateDirectory(Path.GetDirectoryName(zipPath)!);
         using (var zip = ZipFile.Open(zipPath, ZipArchiveMode.Create))
@@ -39,6 +43,8 @@ public sealed class RomScannerTests
         var found = RomScanner.Scan(root);
         Assert.Equal("snes", found.Single(game => game.RelativePath.EndsWith("demo.bin")).SystemId);
         Assert.Equal("genesis", found.Single(game => game.RelativePath.EndsWith("sonic.bin")).SystemId);
+        Assert.Equal("nes", found.Single(game => game.RelativePath.EndsWith("mario.bin")).SystemId);
+        Assert.Equal("genesis", found.Single(game => game.RelativePath.EndsWith("streets.bin")).SystemId);
         var zipped = found.Single(game => game.RelativePath.Contains("favorites.zip"));
         Assert.Equal("nes", zipped.SystemId);
         Assert.EndsWith("#bigger.nes", zipped.RelativePath);
@@ -50,7 +56,10 @@ public sealed class RomScannerTests
 
     [Theory]
     [InlineData("NES", "nes")]
+    [InlineData("nes", "nes")]
     [InlineData("Mega Drive", "genesis")]
+    [InlineData("md", "genesis")]
+    [InlineData("sfc", "snes")]
     [InlineData("SNES", "snes")]
     [InlineData("notes", null)]
     public void Folder_names_map_to_systems(string name, string? expected)

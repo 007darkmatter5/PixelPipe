@@ -46,6 +46,10 @@ internal sealed class TrayApplication : ApplicationContext
         var menu = new ContextMenuStrip();
         menu.Items.Add("Open PixelPipe", null, (_, _) => OpenSite());
         menu.Items.Add("Open log folder", null, (_, _) => OpenLogs());
+        menu.Items.Add("Check for updates", null, (_, _) => _ = CheckForUpdates(announce: true));
+        _updateItem = new ToolStripMenuItem("Update") { Visible = false };
+        _updateItem.Click += (_, _) => _ = ApplyUpdate();
+        menu.Items.Add(_updateItem);
         menu.Items.Add("Restart", null, (_, _) => Restart());
         menu.Items.Add("Quit", null, (_, _) => Quit());
 
@@ -58,6 +62,66 @@ internal sealed class TrayApplication : ApplicationContext
         };
         _icon.DoubleClick += (_, _) => OpenSite();
         StartChildren();
+        _ = WatchUpdates();
+    }
+
+    private readonly ToolStripMenuItem _updateItem;
+    private string? _latestVersion;
+
+    private async Task WatchUpdates()
+    {
+        await Task.Delay(TimeSpan.FromSeconds(25));
+        while (!_quitting)
+        {
+            await CheckForUpdates(announce: true);
+            await Task.Delay(TimeSpan.FromHours(12));
+        }
+    }
+
+    private async Task CheckForUpdates(bool announce)
+    {
+        try
+        {
+            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+            using var response = await client.PostAsync("http://127.0.0.1:8080/api/app/update/check", content: null);
+            if (!response.IsSuccessStatusCode)
+            {
+                return;
+            }
+
+            using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var root = doc.RootElement;
+            var available = root.TryGetProperty("updateAvailable", out var flag) && flag.GetBoolean();
+            var latest = root.TryGetProperty("latestVersion", out var version) ? version.GetString() : null;
+            _ui.BeginInvoke(new Action(() =>
+            {
+                _latestVersion = latest;
+                _updateItem.Visible = available && !string.IsNullOrWhiteSpace(latest);
+                _updateItem.Text = available ? $"Update to {latest}" : "Update";
+                if (announce && available && !string.IsNullOrWhiteSpace(latest))
+                {
+                    _icon.ShowBalloonTip(8000, "PixelPipe update", $"Version {latest} is available.", ToolTipIcon.Info);
+                }
+            }));
+        }
+        catch
+        {
+            // The web UI may still be starting.
+        }
+    }
+
+    private async Task ApplyUpdate()
+    {
+        try
+        {
+            using var client = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
+            using var body = new StringContent("{\"confirm\":true}", System.Text.Encoding.UTF8, "application/json");
+            await client.PostAsync("http://127.0.0.1:8080/api/app/update/apply", body);
+        }
+        catch (Exception ex)
+        {
+            AppendLog(ex.Message);
+        }
     }
 
     private void StartChildren()

@@ -120,6 +120,27 @@ begin
   Result := Result + '"';
 end;
 
+function ShouldWriteConfig: Boolean;
+var
+  Param, Typed: String;
+begin
+  Param := Trim(ExpandConstant('{param:ROMDIR|}'));
+  if Param <> '' then
+  begin
+    Result := True;
+    Exit;
+  end;
+  Typed := '';
+  if RomsEdit <> nil then
+    Typed := Trim(RomsEdit.Text);
+  if Typed <> '' then
+  begin
+    Result := True;
+    Exit;
+  end;
+  Result := not FileExists(ExpandConstant('{commonappdata}\PixelPipe\config.json'));
+end;
+
 function ChosenRoms: String;
 var
   FromParam, FromPage: String;
@@ -150,16 +171,24 @@ begin
   App := ExpandConstant('{app}');
   ConfigDir := ExpandConstant('{commonappdata}\PixelPipe');
   ForceDirectories(ConfigDir);
-  Json :=
-    '{' + #13#10 +
-    '  "roms": ' + JsonQuote(ChosenRoms) + ',' + #13#10 +
-    '  "cores": ' + JsonQuote(App + '\cores') + ',' + #13#10 +
-    '  "data": ' + JsonQuote(ConfigDir) + ',' + #13#10 +
-    '  "bind": "0.0.0.0:9090",' + #13#10 +
-    '  "webrtc_port_min": 50000,' + #13#10 +
-    '  "webrtc_port_max": 50100' + #13#10 +
-    '}' + #13#10;
-  SaveStringToFile(ConfigDir + '\config.json', Json, False);
+  { An upgrade with a blank ROM page keeps the existing library path and saves. }
+  if ShouldWriteConfig then
+  begin
+    Json :=
+      '{' + #13#10 +
+      '  "roms": ' + JsonQuote(ChosenRoms) + ',' + #13#10 +
+      '  "cores": ' + JsonQuote(App + '\cores') + ',' + #13#10 +
+      '  "data": ' + JsonQuote(ConfigDir) + ',' + #13#10 +
+      '  "bind": "0.0.0.0:9090",' + #13#10 +
+      '  "webrtc_port_min": 50000,' + #13#10 +
+      '  "webrtc_port_max": 50100' + #13#10 +
+      '}' + #13#10;
+    SaveStringToFile(ConfigDir + '\config.json', Json, False);
+  end;
+  if WizardIsTaskSelected('startup') then
+    SaveStringToFile(ConfigDir + '\launch-mode.txt', 'tray', False)
+  else
+    SaveStringToFile(ConfigDir + '\launch-mode.txt', 'service', False);
 
   if WizardIsTaskSelected('firewall') then
   begin

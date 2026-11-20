@@ -1,4 +1,6 @@
 @inherits LayoutComponentBase
+@inject UpdateService Updates
+@implements IDisposable
 
 <MudThemeProvider Theme="_theme" IsDarkMode="true" />
 <MudPopoverProvider />
@@ -10,6 +12,12 @@
         <MudText Typo="Typo.h6" Class="brand">PixelPipe</MudText>
         <MudText Typo="Typo.body2" Class="ml-3 tagline">Plex for retro games</MudText>
         <MudSpacer />
+        @if (Updates.Snapshot.UpdateAvailable)
+        {
+            <MudButton Href="/settings" Variant="Variant.Filled" Color="Color.Secondary" Size="Size.Small" Class="mr-2">
+                Update @Updates.Snapshot.LatestVersion
+            </MudButton>
+        }
         <MudButton Href="/" Variant="Variant.Text" Color="Color.Inherit">Library</MudButton>
         <MudButton Href="/settings" Variant="Variant.Text" Color="Color.Inherit">Settings</MudButton>
     </MudAppBar>
@@ -19,6 +27,29 @@
 </MudLayout>
 
 @code {
+    private PeriodicTimer? _timer;
+
+    protected override void OnInitialized()
+    {
+        _timer = new PeriodicTimer(TimeSpan.FromSeconds(15));
+        _ = RefreshAsync();
+    }
+
+    private async Task RefreshAsync()
+    {
+        if (_timer is null)
+        {
+            return;
+        }
+
+        while (await _timer.WaitForNextTickAsync())
+        {
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    public void Dispose() => _timer?.Dispose();
+
     private readonly MudTheme _theme = new()
     {
         PaletteLight = new PaletteLight(),

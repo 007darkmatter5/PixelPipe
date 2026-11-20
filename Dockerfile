@@ -45,7 +45,8 @@ ENV ASPNETCORE_URLS=http://0.0.0.0:8080 \
     PIXELPIPE_WEBRTC_PORT_MAX=50100 \
     PixelPipe__RomsPath=/roms \
     PixelPipe__EngineUrl=http://127.0.0.1:9090 \
-    PixelPipe__PublicEngineUrl=
+    PixelPipe__PublicEngineUrl= \
+    PIXELPIPE_DOCKER=1
 EXPOSE 8080 9090
 VOLUME ["/roms", "/data"]
 ENTRYPOINT ["/entrypoint.sh"]

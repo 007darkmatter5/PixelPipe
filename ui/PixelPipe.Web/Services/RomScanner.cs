@@ -85,8 +85,8 @@ public static class RomScanner
         return compact switch
         {
             "nes" or "famicom" => "nes",
-            "snes" or "supernintendo" or "superfamicom" => "snes",
-            "genesis" or "megadrive" or "segagenesis" => "genesis",
+            "snes" or "sfc" or "smc" or "supernintendo" or "superfamicom" => "snes",
+            "genesis" or "megadrive" or "md" or "gen" or "smd" or "segagenesis" => "genesis",
             _ => null,
         };
     }

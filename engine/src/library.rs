@@ -73,8 +73,8 @@ impl System {
             .collect();
         match compact.as_str() {
             "nes" | "famicom" => Some(System::Nes),
-            "snes" | "supernintendo" | "superfamicom" => Some(System::Snes),
-            "genesis" | "megadrive" | "segagenesis" => Some(System::Genesis),
+            "snes" | "sfc" | "smc" | "supernintendo" | "superfamicom" => Some(System::Snes),
+            "genesis" | "megadrive" | "md" | "gen" | "smd" | "segagenesis" => Some(System::Genesis),
             _ => None,
         }
     }
@@ -494,8 +494,12 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(root.join("consoles/SNES/usa")).unwrap();
         fs::create_dir_all(root.join("Mega Drive")).unwrap();
+        fs::create_dir_all(root.join("nes")).unwrap();
+        fs::create_dir_all(root.join("sfc")).unwrap();
         fs::write(root.join("consoles/SNES/usa/demo.bin"), b"snes-bin").unwrap();
         fs::write(root.join("Mega Drive/sonic.bin"), b"md-bin").unwrap();
+        fs::write(root.join("nes/mario.bin"), b"nes-bin").unwrap();
+        fs::write(root.join("sfc/zelda.bin"), b"sfc-bin").unwrap();
         let zip_path = root.join("packs/favorites.zip");
         fs::create_dir_all(zip_path.parent().unwrap()).unwrap();
         {
@@ -528,6 +532,22 @@ mod tests {
             .unwrap();
         assert_eq!(zipped.system, System::Nes);
         assert!(zipped.file.ends_with("#bigger.nes"));
+        assert_eq!(
+            games
+                .iter()
+                .find(|game| game.file.ends_with("mario.bin"))
+                .unwrap()
+                .system,
+            System::Nes
+        );
+        assert_eq!(
+            games
+                .iter()
+                .find(|game| game.file.ends_with("zelda.bin"))
+                .unwrap()
+                .system,
+            System::Snes
+        );
         let _ = fs::remove_dir_all(&root);
     }
 }
