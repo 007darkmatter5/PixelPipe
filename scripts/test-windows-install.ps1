@@ -15,6 +15,29 @@ $Roms = 'C:\PixelPipeRoms'
 $InstallDir = 'C:\Program Files\PixelPipe'
 $ConfigPath = 'C:\ProgramData\PixelPipe\config.json'
 
+function Wait-SetupProcess($Process, [int]$Seconds, [string]$Label) {
+    # Poll HasExited. Process.WaitForExit(timeout) can sit forever in CI once the
+    # installer has started the tray, because the timeout overload then waits on
+    # inherited console handles.
+    $deadline = (Get-Date).AddSeconds($Seconds)
+    while ($true) {
+        try {
+            $Process.Refresh()
+            if ($Process.HasExited) {
+                return $Process.ExitCode
+            }
+        }
+        catch {
+            return 0
+        }
+        if ((Get-Date) -gt $deadline) {
+            & taskkill.exe /F /T /PID $Process.Id | Out-Host
+            throw "$Label did not exit within $Seconds seconds"
+        }
+        Start-Sleep -Seconds 2
+    }
+}
+
 function Stop-PixelPipe {
     # Stop the tray first so it does not restart the children it supervises.
     foreach ($name in @('PixelPipe.Tray', 'PixelPipe.Web', 'pixelpipe-engine')) {
@@ -92,14 +115,10 @@ $install = Start-Process -FilePath $Setup -ArgumentList @(
     "/LOG=$Log",
     "/ROMDIR=$Roms"
 ) -PassThru
-if (-not $install.WaitForExit(300000)) {
+$installCode = Wait-SetupProcess $install 300 'installer'
+if ($installCode -ne 0) {
     Show-InstallLog
-    Stop-Process -Id $install.Id -Force -ErrorAction SilentlyContinue
-    throw 'installer did not exit within 5 minutes'
-}
-if ($install.ExitCode -ne 0) {
-    Show-InstallLog
-    throw "installer exit code $($install.ExitCode)"
+    throw "installer exit code $installCode"
 }
 if (Test-Path $Log) {
     $logText = Get-Content $Log -Raw
@@ -150,14 +169,10 @@ $upgrade = Start-Process -FilePath $Setup -ArgumentList @(
     '/TASKS=startup,firewall',
     "/LOG=$upgradeLog"
 ) -PassThru
-if (-not $upgrade.WaitForExit(300000)) {
+$upgradeCode = Wait-SetupProcess $upgrade 300 'upgrade installer'
+if ($upgradeCode -ne 0) {
     if (Test-Path $upgradeLog) { Get-Content $upgradeLog -Tail 120 }
-    Stop-Process -Id $upgrade.Id -Force -ErrorAction SilentlyContinue
-    throw 'upgrade installer did not exit within 5 minutes'
-}
-if ($upgrade.ExitCode -ne 0) {
-    if (Test-Path $upgradeLog) { Get-Content $upgradeLog -Tail 120 }
-    throw "upgrade installer exit code $($upgrade.ExitCode)"
+    throw "upgrade installer exit code $upgradeCode"
 }
 
 $cfg2 = Get-Content $ConfigPath -Raw | ConvertFrom-Json
@@ -180,12 +195,9 @@ $remove = Start-Process -FilePath $unins -ArgumentList @(
     '/SUPPRESSMSGBOXES',
     '/NORESTART'
 ) -PassThru
-if (-not $remove.WaitForExit(180000)) {
-    Stop-Process -Id $remove.Id -Force -ErrorAction SilentlyContinue
-    throw 'uninstaller did not exit within 3 minutes'
-}
-if ($remove.ExitCode -ne 0) {
-    throw "uninstaller exit code $($remove.ExitCode)"
+$removeCode = Wait-SetupProcess $remove 180 'uninstaller'
+if ($removeCode -ne 0) {
+    throw "uninstaller exit code $removeCode"
 }
 if (Test-Path $engine) { throw 'engine executable still present after uninstall' }
 Write-Host 'silent install test passed'
