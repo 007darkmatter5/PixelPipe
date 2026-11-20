@@ -32,6 +32,8 @@ if (Test-Path $Log) { Remove-Item -Force $Log }
 Stop-PixelPipe
 
 Write-Host "silent install $Setup"
+# Do not use Start-Process -Wait. That waits for the whole process tree, including
+# the engine the installer launches, so the test would never reach the HTTP check.
 $install = Start-Process -FilePath $Setup -ArgumentList @(
     '/VERYSILENT',
     '/SUPPRESSMSGBOXES',
@@ -39,9 +41,13 @@ $install = Start-Process -FilePath $Setup -ArgumentList @(
     '/TASKS=startup,firewall',
     "/LOG=$Log",
     "/ROMDIR=$Roms"
-) -Wait -PassThru
-
-if ($null -eq $install.ExitCode -or $install.ExitCode -ne 0) {
+) -PassThru
+if (-not $install.WaitForExit(300000)) {
+    Show-InstallLog
+    Stop-Process -Id $install.Id -Force -ErrorAction SilentlyContinue
+    throw 'installer did not exit within 5 minutes'
+}
+if ($install.ExitCode -ne 0) {
     Show-InstallLog
     throw "installer exit code $($install.ExitCode)"
 }
@@ -99,8 +105,12 @@ $remove = Start-Process -FilePath $unins -ArgumentList @(
     '/VERYSILENT',
     '/SUPPRESSMSGBOXES',
     '/NORESTART'
-) -Wait -PassThru
-if ($null -eq $remove.ExitCode -or $remove.ExitCode -ne 0) {
+) -PassThru
+if (-not $remove.WaitForExit(180000)) {
+    Stop-Process -Id $remove.Id -Force -ErrorAction SilentlyContinue
+    throw 'uninstaller did not exit within 3 minutes'
+}
+if ($remove.ExitCode -ne 0) {
     throw "uninstaller exit code $($remove.ExitCode)"
 }
 if (Test-Path $engine) { throw 'engine executable still present after uninstall' }
