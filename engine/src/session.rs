@@ -515,7 +515,7 @@ fn emu_loop(
             match cmd {
                 EmuCmd::Stop => {
                     persist_sram(&core, &args.sram_path);
-                    persist_state(&core, &args.auto_path);
+                    persist_state(&mut core, &args.auto_path);
                     return Ok(());
                 }
                 EmuCmd::Save(tx) => {
@@ -558,7 +558,7 @@ fn emu_loop(
         }
     }
     persist_sram(&core, &args.sram_path);
-    persist_state(&core, &args.auto_path);
+    persist_state(&mut core, &args.auto_path);
     Ok(())
 }
 
@@ -634,7 +634,7 @@ fn pad_even(src: &[u8], src_w: u32, src_h: u32, dst_w: u32, dst_h: u32) -> Vec<u
     out
 }
 
-fn persist_state(core: &Core, path: &Path) {
+fn persist_state(core: &mut Core, path: &Path) {
     let Ok(bytes) = core.serialize() else {
         return;
     };
