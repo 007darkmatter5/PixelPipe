@@ -20,6 +20,11 @@
         }
         <MudButton Href="/" Variant="Variant.Text" Color="Color.Inherit">Library</MudButton>
         <MudButton Href="/settings" Variant="Variant.Text" Color="Color.Inherit">Settings</MudButton>
+        <AuthorizeView Roles="Admin">
+            <MudButton Href="/admin" Variant="Variant.Text" Color="Color.Inherit">People</MudButton>
+        </AuthorizeView>
+        <MudButton Href="/account" Variant="Variant.Text" Color="Color.Inherit">Account</MudButton>
+        <MudButton Href="/logout" Variant="Variant.Text" Color="Color.Inherit">Sign out</MudButton>
     </MudAppBar>
     <MudMainContent Class="main-content">
         @Body

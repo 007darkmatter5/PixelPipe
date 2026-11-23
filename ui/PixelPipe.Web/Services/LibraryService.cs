@@ -226,6 +226,7 @@ public sealed class LibraryService
                 SystemId = found.SystemId,
                 Crc32 = found.Crc32,
                 RomCrc32 = found.RomCrc32,
+                ContentHash = found.ContentHash,
                 BoxArtFile = FindBoxArt(libraryRoot, found.FullPath, stem, found.Crc32),
                 Year = year,
                 Developer = developer,

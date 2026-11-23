@@ -1,7 +1,7 @@
 ; PixelPipe Windows installer. Build it with scripts\build-windows.ps1.
 
 #define MyAppName "PixelPipe"
-#define MyAppVersion "0.2.3"
+#define MyAppVersion "0.3.0"
 #define MyAppPublisher "PixelPipe"
 
 [Setup]
@@ -9,8 +9,8 @@ AppId={{B7E1C4A2-9D55-4F0E-8A61-3C2D9E7F4A18}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
-VersionInfoVersion=0.2.3.0
-VersionInfoProductVersion=0.2.3
+VersionInfoVersion=0.3.0.0
+VersionInfoProductVersion=0.3.0
 DefaultDirName={autopf}\PixelPipe
 DefaultGroupName=PixelPipe
 DisableProgramGroupPage=yes
@@ -186,7 +186,7 @@ begin
       '  "roms": ' + JsonQuote(ChosenRoms) + ',' + #13#10 +
       '  "cores": ' + JsonQuote(App + '\cores') + ',' + #13#10 +
       '  "data": ' + JsonQuote(ConfigDir) + ',' + #13#10 +
-      '  "bind": "0.0.0.0:9090",' + #13#10 +
+      '  "bind": "127.0.0.1:9090",' + #13#10 +
       '  "webrtc_port_min": 50000,' + #13#10 +
       '  "webrtc_port_max": 50100' + #13#10 +
       '}' + #13#10;

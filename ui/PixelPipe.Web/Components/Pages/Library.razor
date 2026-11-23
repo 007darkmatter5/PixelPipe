@@ -1,5 +1,8 @@
 @page "/"
+@attribute [Authorize]
 @inject LibraryService Catalog
+@inject AccountStore Accounts
+@inject AuthenticationStateProvider Auth
 
 <PageTitle>Library · PixelPipe</PageTitle>
 
@@ -36,7 +39,15 @@
                 <div class="poster-meta">
                     <MudText Typo="Typo.subtitle1" Class="title">@game.Title</MudText>
                     <MudChip T="string" Size="Size.Small" Color="@ChipColor(game.SystemId)">@game.System</MudChip>
-                    <MudButton Href="@game.PlayHref" Variant="Variant.Filled" Color="Color.Primary" FullWidth="true" Class="mt-2">Play</MudButton>
+                    @if (_progress.TryGetValue(game.ContentHash, out var played))
+                    {
+                        <MudText Typo="Typo.caption">Last played @played.LastPlayed.ToLocalTime().ToString("g")</MudText>
+                        <MudButton Href="@($"{game.PlayHref}?slot=auto")" Variant="Variant.Filled" Color="Color.Primary" FullWidth="true" Class="mt-2">Continue</MudButton>
+                    }
+                    else
+                    {
+                        <MudButton Href="@game.PlayHref" Variant="Variant.Filled" Color="Color.Primary" FullWidth="true" Class="mt-2">Play</MudButton>
+                    }
                 </div>
             </article>
         }
@@ -55,7 +66,15 @@
                 <div class="poster-meta">
                     <MudText Typo="Typo.subtitle1" Class="title">@game.Title</MudText>
                     <MudChip T="string" Size="Size.Small" Color="@ChipColor(game.SystemId)">@game.System</MudChip>
-                    <MudButton Href="@game.PlayHref" Variant="Variant.Filled" Color="Color.Primary" FullWidth="true" Class="mt-2">Play</MudButton>
+                    @if (_progress.TryGetValue(game.ContentHash, out var played))
+                    {
+                        <MudText Typo="Typo.caption">Last played @played.LastPlayed.ToLocalTime().ToString("g")</MudText>
+                        <MudButton Href="@($"{game.PlayHref}?slot=auto")" Variant="Variant.Filled" Color="Color.Primary" FullWidth="true" Class="mt-2">Continue</MudButton>
+                    }
+                    else
+                    {
+                        <MudButton Href="@game.PlayHref" Variant="Variant.Filled" Color="Color.Primary" FullWidth="true" Class="mt-2">Play</MudButton>
+                    }
                 </div>
             </article>
         }
@@ -95,7 +114,18 @@
     private IEnumerable<GameEntry> libraryGames =>
         visible.Where(game => !game.RelativePath.StartsWith("bundled/", StringComparison.OrdinalIgnoreCase));
 
-    protected override void OnInitialized() => snapshot = Catalog.Get();
+    private Dictionary<string, ProgressRow> _progress = new(StringComparer.OrdinalIgnoreCase);
+
+    protected override async Task OnInitializedAsync()
+    {
+        snapshot = Catalog.Get();
+        var state = await Auth.GetAuthenticationStateAsync();
+        var id = state.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        if (!string.IsNullOrEmpty(id))
+        {
+            _progress = Accounts.ProgressFor(id).ToDictionary(row => row.GameHash, StringComparer.OrdinalIgnoreCase);
+        }
+    }
 
     private void Refresh()
     {

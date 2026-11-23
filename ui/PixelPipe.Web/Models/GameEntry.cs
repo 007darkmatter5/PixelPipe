@@ -8,6 +8,7 @@ public sealed class GameEntry
     public required string SystemId { get; init; }
     public required string Crc32 { get; init; }
     public string? RomCrc32 { get; init; }
+    public string ContentHash { get; init; } = "";
     public string? BoxArtFile { get; init; }
     public int? Year { get; init; }
     public string? Developer { get; init; }

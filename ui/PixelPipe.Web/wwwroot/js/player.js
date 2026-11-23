@@ -11,6 +11,8 @@
     mask: 0,
     engine: "",
     rom: "",
+    slot: "1",
+    iceServers: [],
   };
 
   window.addEventListener("keydown", (event) => {
@@ -93,7 +95,7 @@
   async function refreshStats() {
     bindStream();
     try {
-      const response = await fetch(`${state.engine}/api/session/stats`);
+      const response = await fetch("/api/session/stats", { credentials: "same-origin" });
       if (!response.ok || !state.pc) return;
       const stats = await response.json();
       let line = `${stats.encoder || "h264"} ${stats.width}x${stats.height} ${Number(stats.fps).toFixed(1)} fps`;
@@ -121,6 +123,7 @@
     if (options && typeof options === "object") {
       rom = options.rom || options.Rom || "";
       engine = options.engine || options.Engine || "";
+      state.slot = options.slot || options.Slot || "1";
     } else {
       rom = options || "";
       engine = engineArg || "";
@@ -141,23 +144,26 @@
       const resolved = resolveStart(options, engineArg);
       state.engine = resolved.engine;
       state.rom = resolved.rom;
-      hud(`starting ${state.rom}\n${state.engine}`);
-      const started = await fetch(`${state.engine}/api/session`, {
+      hud(`starting ${state.rom}`);
+      const started = await fetch("/api/session", {
         method: "POST",
+        credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rom: state.rom }),
+        body: JSON.stringify({ rom: state.rom, slot: state.slot || "1" }),
       });
       if (!started.ok) {
-        hud(`${started.status} ${state.engine}/api/session\n${await started.text()}`);
+        hud(`${started.status} /api/session\n${await started.text()}`);
         state.pc = null;
         return;
       }
+      const startedBody = await started.json();
+      state.iceServers = startedBody.iceServers || startedBody.IceServers || [];
     } catch (err) {
       hud(String(err));
       state.pc = null;
       return;
     }
-    const pc = new RTCPeerConnection({ iceServers: [] });
+    const pc = new RTCPeerConnection({ iceServers: state.iceServers || [] });
     state.pc = pc;
     state.stream = new MediaStream();
     pc.ontrack = (event) => {
@@ -184,7 +190,7 @@
         }
       };
     };
-    const offerRes = await fetch(`${state.engine}/api/session/offer`, { method: "POST" });
+    const offerRes = await fetch("/api/session/offer", { method: "POST", credentials: "same-origin" });
     if (!offerRes.ok) {
       hud(await offerRes.text());
       return;
@@ -193,7 +199,8 @@
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
     await waitIce(pc);
-    const answered = await fetch(`${state.engine}/api/session/answer`, {
+    const answered = await fetch("/api/session/answer", {
+      credentials: "same-origin",
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ type: pc.localDescription.type, sdp: pc.localDescription.sdp }),
@@ -207,14 +214,22 @@
     hud("connecting");
   }
 
-  async function saveState() {
-    if (!state.engine) return;
-    await fetch(`${state.engine}/api/session/savestate`, { method: "POST" });
+  async function saveState(slot) {
+    await fetch("/api/session/savestate", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slot: slot || state.slot || "1" }),
+    });
   }
 
-  async function loadState() {
-    if (!state.engine) return;
-    await fetch(`${state.engine}/api/session/loadstate`, { method: "POST" });
+  async function loadState(slot) {
+    await fetch("/api/session/loadstate", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slot: slot || state.slot || "1" }),
+    });
   }
 
   window.pixelpipePlayer = { start, saveState, loadState };

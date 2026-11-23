@@ -1,6 +1,11 @@
 <Router AppAssembly="typeof(Program).Assembly">
     <Found Context="routeData">
-        <RouteView RouteData="routeData" DefaultLayout="typeof(MainLayout)" />
+        <AuthorizeRouteView RouteData="routeData" DefaultLayout="typeof(MainLayout)">
+            <NotAuthorized>
+                <MudText Typo="Typo.h5">Sign in to play.</MudText>
+                <MudButton Href="/login" Variant="Variant.Filled" Color="Color.Primary" Class="mt-4">Sign in</MudButton>
+            </NotAuthorized>
+        </AuthorizeRouteView>
         <FocusOnNavigate RouteData="routeData" Selector="h1" />
     </Found>
     <NotFound>

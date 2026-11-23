@@ -1,0 +1,97 @@
+@page "/admin"
+@attribute [Authorize(Roles = "Admin")]
+@inject AccountStore Accounts
+
+<PageTitle>People · PixelPipe</PageTitle>
+<MudText Typo="Typo.h4">People</MudText>
+<MudText Typo="Typo.body2" Class="mud-text-secondary mb-4">Admins manage accounts. Players only see their own saves.</MudText>
+
+<MudPaper Class="pa-4 mb-4" Elevation="0">
+    <MudText Typo="Typo.h6">New account</MudText>
+    <MudTextField @bind-Value="_username" Label="Username" Class="mt-2" />
+    <MudTextField @bind-Value="_password" Label="Password" InputType="InputType.Password" Class="mt-2" />
+    <MudSelect T="string" @bind-Value="_role" Label="Role" Class="mt-2">
+        <MudSelectItem Value="@("User")">User</MudSelectItem>
+        <MudSelectItem Value="@("Admin")">Admin</MudSelectItem>
+    </MudSelect>
+    <MudButton Variant="Variant.Filled" Color="Color.Primary" Class="mt-3" OnClick="Create">Create</MudButton>
+    @if (!string.IsNullOrEmpty(_message))
+    {
+        <MudAlert Severity="Severity.Info" Class="mt-3">@_message</MudAlert>
+    }
+</MudPaper>
+
+@foreach (var user in _users)
+{
+    <MudPaper Class="pa-4 mb-2" Elevation="0">
+        <MudText Typo="Typo.subtitle1">@user.Username · @user.Role @(user.Disabled ? "(disabled)" : "")</MudText>
+        <MudTextField @bind-Value="_resets[user.Id]" Label="New password" InputType="InputType.Password" Class="mt-2" />
+        <MudStack Row="true" Class="mt-2">
+            <MudButton Variant="Variant.Outlined" OnClick="@(() => Reset(user))">Reset password</MudButton>
+            <MudButton Variant="Variant.Outlined" OnClick="@(() => Toggle(user))">@(user.Disabled ? "Enable" : "Disable")</MudButton>
+            <MudButton Variant="Variant.Outlined" Color="Color.Error" OnClick="@(() => Remove(user))">Delete</MudButton>
+        </MudStack>
+    </MudPaper>
+}
+
+@code {
+    private string _username = "";
+    private string _password = "";
+    private string _role = "User";
+    private string? _message;
+    private List<AccountUser> _users = new();
+    private Dictionary<string, string> _resets = new();
+
+    protected override void OnInitialized() => Reload();
+
+    private void Reload()
+    {
+        _users = Accounts.List().ToList();
+        foreach (var user in _users)
+        {
+            _resets.TryAdd(user.Id, "");
+        }
+    }
+
+    private void Create()
+    {
+        try
+        {
+            Accounts.Create(_username, _password, _role);
+            _username = "";
+            _password = "";
+            _message = "Account created.";
+            Reload();
+        }
+        catch (Exception ex)
+        {
+            _message = ex.Message;
+        }
+    }
+
+    private void Reset(AccountUser user)
+    {
+        try
+        {
+            Accounts.SetPassword(user.Id, _resets.GetValueOrDefault(user.Id) ?? "");
+            _resets[user.Id] = "";
+            _message = "Password reset.";
+        }
+        catch (Exception ex)
+        {
+            _message = ex.Message;
+        }
+    }
+
+    private void Toggle(AccountUser user)
+    {
+        Accounts.SetDisabled(user.Id, !user.Disabled);
+        Reload();
+    }
+
+    private void Remove(AccountUser user)
+    {
+        Accounts.Delete(user.Id);
+        Reload();
+    }
+}

@@ -13,6 +13,7 @@ public static class RomScanner
         string FullPath,
         string Crc32,
         string? RomCrc32,
+        string ContentHash,
         long Bytes);
 
     public static List<Found> Scan(string root, string relativePrefix = "")
@@ -41,6 +42,7 @@ public static class RomScanner
             string titleStem;
             string crc;
             string? romCrc;
+            string contentHash;
             long bytes;
             if (ext == "zip")
             {
@@ -53,7 +55,7 @@ public static class RomScanner
                 systemId = picked.Value.SystemId;
                 relative += "#" + picked.Value.EntryName.Replace('\\', '/');
                 titleStem = Path.GetFileNameWithoutExtension(picked.Value.EntryName);
-                (crc, romCrc, bytes) = picked.Value.Hash;
+                (crc, romCrc, contentHash, bytes) = picked.Value.Hash;
             }
             else
             {
@@ -65,7 +67,7 @@ public static class RomScanner
 
                 systemId = detected;
                 titleStem = Path.GetFileNameWithoutExtension(file);
-                (crc, romCrc, bytes) = HashFile(file, systemId == "nes");
+                (crc, romCrc, contentHash, bytes) = HashFile(file, systemId == "nes");
             }
 
             if (!string.IsNullOrEmpty(relativePrefix))
@@ -73,7 +75,7 @@ public static class RomScanner
                 relative = relativePrefix.Trim('/') + "/" + relative;
             }
 
-            found.Add(new Found(relative, systemId, Prettify(titleStem), file, crc, romCrc, bytes));
+            found.Add(new Found(relative, systemId, Prettify(titleStem), file, crc, romCrc, contentHash, bytes));
         }
 
         return found;
@@ -125,7 +127,7 @@ public static class RomScanner
         return null;
     }
 
-    private readonly record struct ZipPick(string EntryName, string SystemId, (string Full, string? Body, long Bytes) Hash);
+    private readonly record struct ZipPick(string EntryName, string SystemId, (string Full, string? Body, string Content, long Bytes) Hash);
 
     private static ZipPick? PickZipEntry(string zipPath, string root)
     {
@@ -174,19 +176,24 @@ public static class RomScanner
         return null;
     }
 
-    private static (string Full, string? Body, long Bytes) HashFile(string path, bool nes)
+    private static (string Full, string? Body, string Content, long Bytes) HashFile(string path, bool nes)
     {
         using var stream = File.OpenRead(path);
         return HashStream(stream, nes);
     }
 
-    private static (string Full, string? Body, long Bytes) HashStream(Stream stream, bool nes)
+    private static (string Full, string? Body, string Content, long Bytes) HashStream(Stream stream, bool nes)
     {
         var full = new Crc32();
         var body = new Crc32();
+        using var sha = System.Security.Cryptography.IncrementalHash.CreateHash(System.Security.Cryptography.HashAlgorithmName.SHA256);
         var header = new byte[16];
         var read = stream.Read(header, 0, header.Length);
         full.Append(header.AsSpan(0, read));
+        if (read > 0)
+        {
+            sha.AppendData(header.AsSpan(0, read));
+        }
         var ines = nes && read == 16 && header[0] == (byte)'N' && header[1] == (byte)'E' && header[2] == (byte)'S' && header[3] == 0x1a;
         var buffer = new byte[64 * 1024];
         long total = read;
@@ -194,6 +201,7 @@ public static class RomScanner
         while ((n = stream.Read(buffer)) > 0)
         {
             full.Append(buffer.AsSpan(0, n));
+            sha.AppendData(buffer.AsSpan(0, n));
             if (ines)
             {
                 body.Append(buffer.AsSpan(0, n));
@@ -202,7 +210,7 @@ public static class RomScanner
             total += n;
         }
 
-        return (Hex(full), ines ? Hex(body) : null, total);
+        return (Hex(full), ines ? Hex(body) : null, Convert.ToHexString(sha.GetHashAndReset()).ToLowerInvariant(), total);
     }
 
     private static string Hex(Crc32 crc)
