@@ -1,18 +1,20 @@
 use std::sync::Arc;
 
-use axum::extract::{Query, State};
-use axum::http::{header, HeaderValue, StatusCode};
-use axum::response::{Html, IntoResponse};
+use axum::extract::{Extension, Query, State};
+use axum::http::{header, HeaderValue, Request, StatusCode};
+use axum::middleware::{self, Next};
+use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
 use serde::Serialize;
 use tower_http::cors::{Any, CorsLayer};
 
+use crate::auth::AuthContext;
 use crate::config::Config;
 use crate::encoder::{probe, EncoderReport};
 use crate::library::{Library, System};
-use crate::session::{SessionHub, SessionInfo, StatsSnapshot};
+use crate::session::{IceServer, SessionHub, SessionInfo, StartSession, StatsSnapshot};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -84,11 +86,12 @@ where
         .route("/api/session/savestate", post(save_state))
         .route("/api/session/loadstate", post(load_state))
         .route("/player", get(player_page))
+        .layer(middleware::from_fn_with_state(state.clone(), require_auth))
         .layer(
             CorsLayer::new()
                 .allow_origin(Any)
                 .allow_methods(Any)
-                .allow_headers([header::CONTENT_TYPE]),
+                .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION]),
         )
         .with_state(state.clone());
 
@@ -155,6 +158,33 @@ pub fn spawn_bundled_ui(config: &Config) -> Option<std::process::Child> {
             None
         }
     }
+}
+
+async fn require_auth(
+    State(state): State<AppState>,
+    mut request: Request<axum::body::Body>,
+    next: Next,
+) -> Result<Response, StatusCode> {
+    let path = request.uri().path().to_string();
+    if path == "/api/health" {
+        return Ok(next.run(request).await);
+    }
+    let header = request
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("");
+    let token = header.strip_prefix("Bearer ").unwrap_or("");
+    let Some(auth) =
+        crate::auth::verify_token(&crate::auth::load_secret(&state.config.data), token)
+    else {
+        return Err(StatusCode::UNAUTHORIZED);
+    };
+    if path == "/api/library/root" && auth.role != "Admin" {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    request.extensions_mut().insert(auth);
+    Ok(next.run(request).await)
 }
 
 async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
@@ -227,15 +257,57 @@ struct CoreDto {
 #[derive(Deserialize)]
 struct StartBody {
     rom: String,
+    #[serde(default)]
+    slot: String,
+    #[serde(default)]
+    ice_servers: Vec<IceBody>,
+}
+
+#[derive(Deserialize)]
+struct IceBody {
+    urls: Vec<String>,
+    #[serde(default)]
+    username: String,
+    #[serde(default)]
+    credential: String,
+}
+
+#[derive(Deserialize)]
+struct SlotBody {
+    #[serde(default)]
+    slot: String,
 }
 
 async fn session_start(
     State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
     Json(body): Json<StartBody>,
 ) -> Result<Json<SessionInfo>, ApiError> {
+    let slot = if body.slot.is_empty() {
+        "1".to_string()
+    } else {
+        body.slot
+    };
     let info = state
         .sessions
-        .start(&state.config, &state.library, &body.rom)
+        .start(
+            &state.config,
+            &state.library,
+            &StartSession {
+                rom: body.rom,
+                user_id: auth.user_id,
+                slot,
+                ice: body
+                    .ice_servers
+                    .into_iter()
+                    .map(|server| IceServer {
+                        urls: server.urls,
+                        username: server.username,
+                        credential: server.credential,
+                    })
+                    .collect(),
+            },
+        )
         .await?;
     Ok(Json(info))
 }
@@ -284,13 +356,29 @@ async fn session_stats(State(state): State<AppState>) -> Result<Json<StatsSnapsh
     Ok(Json(stats))
 }
 
-async fn save_state(State(state): State<AppState>) -> Result<Json<serde_json::Value>, ApiError> {
-    let bytes = state.sessions.save_state().await?;
-    Ok(Json(serde_json::json!({ "bytes": bytes })))
+async fn save_state(
+    State(state): State<AppState>,
+    Json(body): Json<SlotBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let slot = if body.slot.is_empty() {
+        "1"
+    } else {
+        &body.slot
+    };
+    let bytes = state.sessions.save_state(slot).await?;
+    Ok(Json(serde_json::json!({ "bytes": bytes, "slot": slot })))
 }
 
-async fn load_state(State(state): State<AppState>) -> Result<StatusCode, ApiError> {
-    state.sessions.load_state().await?;
+async fn load_state(
+    State(state): State<AppState>,
+    Json(body): Json<SlotBody>,
+) -> Result<StatusCode, ApiError> {
+    let slot = if body.slot.is_empty() {
+        "1".to_string()
+    } else {
+        body.slot
+    };
+    state.sessions.load_state(&slot).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

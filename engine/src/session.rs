@@ -157,7 +157,7 @@ pub struct ActiveSession {
     thread: Option<std::thread::JoinHandle<()>>,
     pc: Arc<RTCPeerConnection>,
     _dc: Arc<RTCDataChannel>,
-    state_path: PathBuf,
+    progress_dir: PathBuf,
     offer: tokio::sync::Mutex<Option<RTCSessionDescription>>,
 }
 
@@ -191,7 +191,7 @@ impl ActiveSession {
         Ok(())
     }
 
-    pub fn save_state(&self) -> anyhow::Result<u64> {
+    pub fn save_state(&self, slot: &str) -> anyhow::Result<u64> {
         let (tx, rx) = std::sync::mpsc::channel();
         self.cmd_tx
             .send(EmuCmd::Save(tx))
@@ -199,15 +199,17 @@ impl ActiveSession {
         let bytes = rx
             .recv_timeout(Duration::from_secs(2))
             .context("save timed out")??;
-        if let Some(parent) = self.state_path.parent() {
+        let path = crate::auth::slot_file(&self.progress_dir, slot);
+        if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(&self.state_path, &bytes)?;
+        std::fs::write(&path, &bytes)?;
         Ok(bytes.len() as u64)
     }
 
-    pub fn load_state(&self) -> anyhow::Result<()> {
-        let bytes = std::fs::read(&self.state_path).context("no save state yet")?;
+    pub fn load_state(&self, slot: &str) -> anyhow::Result<()> {
+        let path = crate::auth::slot_file(&self.progress_dir, slot);
+        let bytes = std::fs::read(&path).context("no save state yet")?;
         let (tx, rx) = std::sync::mpsc::channel();
         self.cmd_tx
             .send(EmuCmd::Load(bytes, tx))
@@ -242,13 +244,13 @@ impl SessionHub {
         &self,
         config: &Config,
         library: &Library,
-        rom_rel: &str,
+        request: &StartSession,
     ) -> anyhow::Result<SessionInfo> {
         let mut guard = self.inner.lock().await;
         if let Some(existing) = guard.take() {
             existing.shutdown().await;
         }
-        let session = spawn_session(config, library, rom_rel).await?;
+        let session = spawn_session(config, library, request).await?;
         let info = session.info.clone();
         *guard = Some(session);
         Ok(info)
@@ -268,14 +270,20 @@ impl SessionHub {
             .await
     }
 
-    pub async fn save_state(&self) -> anyhow::Result<u64> {
+    pub async fn save_state(&self, slot: &str) -> anyhow::Result<u64> {
         let guard = self.inner.lock().await;
-        guard.as_ref().context("no active session")?.save_state()
+        guard
+            .as_ref()
+            .context("no active session")?
+            .save_state(slot)
     }
 
-    pub async fn load_state(&self) -> anyhow::Result<()> {
+    pub async fn load_state(&self, slot: &str) -> anyhow::Result<()> {
         let guard = self.inner.lock().await;
-        guard.as_ref().context("no active session")?.load_state()
+        guard
+            .as_ref()
+            .context("no active session")?
+            .load_state(slot)
     }
 
     pub async fn stats(&self) -> Option<(SessionInfo, StatsSnapshot)> {
@@ -291,11 +299,26 @@ impl SessionHub {
     }
 }
 
+pub struct StartSession {
+    pub rom: String,
+    pub user_id: String,
+    pub slot: String,
+    pub ice: Vec<IceServer>,
+}
+
+#[derive(Clone, Debug)]
+pub struct IceServer {
+    pub urls: Vec<String>,
+    pub username: String,
+    pub credential: String,
+}
+
 async fn spawn_session(
     config: &Config,
     library: &Library,
-    rom_rel: &str,
+    request: &StartSession,
 ) -> anyhow::Result<ActiveSession> {
+    let rom_rel = request.rom.as_str();
     let games = library.games()?;
     let game = games
         .iter()
@@ -315,7 +338,7 @@ async fn spawn_session(
         .selected
         .context("no H.264 encoder available")?;
 
-    let (pc, video, audio, dc) = build_peer(config).await?;
+    let (pc, video, audio, dc) = build_peer(config, &request.ice).await?;
     let stats = LiveStats::new();
     let connected = Arc::new(AtomicBool::new(false));
     let force_idr = Arc::new(AtomicBool::new(true));
@@ -340,8 +363,14 @@ async fn spawn_session(
 
     let (cmd_tx, cmd_rx) = std::sync::mpsc::channel::<EmuCmd>();
     let (ready_tx, ready_rx) = std::sync::mpsc::channel();
-    let sram_path = config.save_dir().join(format!("{}.srm", game.crc32));
-    let state_path = config.save_dir().join(format!("{}.state", game.crc32));
+    let game_hash = crate::auth::sha256_file(&rom_path)
+        .with_context(|| format!("hash {}", rom_path.display()))?;
+    let progress =
+        crate::auth::progress_dir(&config.data, &request.user_id, game.system.id(), &game_hash);
+    std::fs::create_dir_all(&progress)?;
+    let sram_path = progress.join("sram.bin");
+    let auto_path = progress.join("auto.state");
+    let initial_state = std::fs::read(crate::auth::slot_file(&progress, &request.slot)).ok();
     let thread_stop = stop.clone();
     let thread_stats = stats.clone();
     let thread_force = force_idr.clone();
@@ -356,6 +385,8 @@ async fn spawn_session(
                 system_dir,
                 save_dir,
                 sram_path,
+                auto_path,
+                initial_state,
                 encoder_kind,
                 cmd_rx,
                 out_tx,
@@ -387,6 +418,7 @@ async fn spawn_session(
     };
     tracing::info!(
         rom = %info.rom,
+        user = %request.user_id,
         system = game_system_label(&game),
         core = %info.core,
         encoder = %info.encoder,
@@ -401,7 +433,7 @@ async fn spawn_session(
         thread: Some(thread),
         pc,
         _dc: dc,
-        state_path,
+        progress_dir: progress,
         offer: tokio::sync::Mutex::new(None),
     })
 }
@@ -416,6 +448,8 @@ struct EmuArgs {
     system_dir: PathBuf,
     save_dir: PathBuf,
     sram_path: PathBuf,
+    auto_path: PathBuf,
+    initial_state: Option<Vec<u8>>,
     encoder_kind: EncoderKind,
     cmd_rx: std::sync::mpsc::Receiver<EmuCmd>,
     out_tx: mpsc::Sender<Outbound>,
@@ -454,6 +488,11 @@ fn emu_loop(
             tracing::info!(path = %args.sram_path.display(), "restored SRAM");
         }
     }
+    if let Some(bytes) = &args.initial_state {
+        if core.unserialize(bytes).is_ok() {
+            tracing::info!("restored save state");
+        }
+    }
     let boot = BootInfo {
         buttons: core.buttons(),
         name: core.name().to_string(),
@@ -470,11 +509,13 @@ fn emu_loop(
     let frame_budget = Duration::from_secs_f64(1.0 / av.fps.max(1.0));
     let sample_duration = Duration::from_secs_f64(1.0 / av.fps.max(1.0));
 
+    let mut frames = 0u64;
     while !args.stop.load(Ordering::Relaxed) {
         while let Ok(cmd) = args.cmd_rx.try_recv() {
             match cmd {
                 EmuCmd::Stop => {
                     persist_sram(&core, &args.sram_path);
+                    persist_state(&mut core, &args.auto_path);
                     return Ok(());
                 }
                 EmuCmd::Save(tx) => {
@@ -507,12 +548,17 @@ fn emu_loop(
             Err(err) => tracing::warn!(%err, "opus"),
         }
 
+        frames += 1;
+        if frames % 120 == 0 {
+            persist_sram(&core, &args.sram_path);
+        }
         let elapsed = started.elapsed();
         if let Some(rest) = frame_budget.checked_sub(elapsed) {
             precise_wait(rest);
         }
     }
     persist_sram(&core, &args.sram_path);
+    persist_state(&mut core, &args.auto_path);
     Ok(())
 }
 
@@ -586,6 +632,18 @@ fn pad_even(src: &[u8], src_w: u32, src_h: u32, dst_w: u32, dst_h: u32) -> Vec<u
         out[d..d + copy_w * 4].copy_from_slice(&src[s..s + copy_w * 4]);
     }
     out
+}
+
+fn persist_state(core: &mut Core, path: &Path) {
+    let Ok(bytes) = core.serialize() else {
+        return;
+    };
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Err(err) = std::fs::write(path, bytes) {
+        tracing::warn!(%err, "writing auto save");
+    }
 }
 
 fn persist_sram(core: &Core, path: &Path) {
@@ -685,6 +743,7 @@ fn wire_input(dc: Arc<RTCDataChannel>, buttons: Arc<AtomicU32>) {
 
 async fn build_peer(
     config: &Config,
+    ice: &[IceServer],
 ) -> anyhow::Result<(
     Arc<RTCPeerConnection>,
     Arc<TrackLocalStaticSample>,
@@ -709,13 +768,25 @@ async fn build_peer(
         .with_media_engine(media)
         .with_interceptor_registry(registry)
         .build();
-    let ice_servers = match &config.stun {
-        Some(url) if !url.is_empty() => vec![RTCIceServer {
-            urls: vec![url.clone()],
+    let mut ice_servers = Vec::new();
+    if let Some(url) = config.stun.clone().filter(|url| !url.is_empty()) {
+        ice_servers.push(RTCIceServer {
+            urls: vec![url],
             ..Default::default()
-        }],
-        _ => vec![],
-    };
+        });
+    }
+    for server in ice {
+        if server.urls.is_empty() {
+            continue;
+        }
+        tracing::info!(urls = ?server.urls, "adding ICE server");
+        ice_servers.push(RTCIceServer {
+            urls: server.urls.clone(),
+            username: server.username.clone(),
+            credential: server.credential.clone(),
+            ..Default::default()
+        });
+    }
     let pc = Arc::new(
         api.new_peer_connection(RTCConfiguration {
             ice_servers,

@@ -4,14 +4,17 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>PixelPipe.Web</RootNamespace>
-    <Version>0.2.3</Version>
+    <Version>0.3.0</Version>
   </PropertyGroup>
   <!-- The Windows publish must not open a console. Docker keeps the console host. -->
   <PropertyGroup Condition="$(RuntimeIdentifier.StartsWith('win'))">
     <OutputType>WinExe</OutputType>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.10" />
+    <PackageReference Include="Microsoft.Extensions.Identity.Core" Version="8.0.10" />
     <PackageReference Include="MudBlazor" Version="8.15.0" />
+    <PackageReference Include="Yarp.ReverseProxy" Version="2.2.0" />
     <PackageReference Include="System.IO.Hashing" Version="8.0.0" />
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
   </ItemGroup>

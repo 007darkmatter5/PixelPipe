@@ -1,4 +1,5 @@
 @page "/play/{*Id}"
+@attribute [Authorize]
 @inject IJSRuntime JS
 @inject LibraryService Library
 @inject NavigationManager Nav
@@ -23,12 +24,18 @@ else
             <MudText Typo="Typo.body2" Class="mud-text-secondary">@_game.System · @_game.Crc32</MudText>
             <div class="row">
                 <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="Start">Play</MudButton>
-                <MudButton Variant="Variant.Outlined" OnClick="Save">Save</MudButton>
-                <MudButton Variant="Variant.Outlined" OnClick="Load">Load</MudButton>
+                <MudButton Variant="Variant.Outlined" OnClick="Save">Save slot @_slot</MudButton>
+                <MudButton Variant="Variant.Outlined" OnClick="Load">Load slot @_slot</MudButton>
             </div>
+            <MudButtonGroup Class="mt-2">
+                @foreach (var slot in new[] { "1", "2", "3", "4", "5" })
+                {
+                    <MudButton Variant="@(_slot == slot ? Variant.Filled : Variant.Outlined)" OnClick="@(() => _slot = slot)">@slot</MudButton>
+                }
+            </MudButtonGroup>
             <MudText Typo="Typo.caption">
-                Keyboard and one browser gamepad are mapped to the libretro joypad.
-                Save states land in the engine data directory.
+                Battery saves are written while you play and when you leave. Leaving also writes the auto slot, which Continue loads.
+                Numbered slots are only yours.
             </MudText>
             <MudButton Href="@_game.DetailHref" Variant="Variant.Text" Class="mt-2">Details</MudButton>
         </aside>
@@ -37,10 +44,19 @@ else
 
 @code {
     [Parameter] public string Id { get; set; } = "";
+    [SupplyParameterFromQuery(Name = "slot")] public string? SlotQuery { get; set; }
     private GameEntry? _game;
     private bool _freeze;
+    private string _slot = "1";
 
-    protected override void OnParametersSet() => _game = Library.Find(Uri.UnescapeDataString(Id));
+    protected override void OnParametersSet()
+    {
+        _game = Library.Find(Uri.UnescapeDataString(Id));
+        if (!string.IsNullOrWhiteSpace(SlotQuery))
+        {
+            _slot = SlotQuery;
+        }
+    }
 
     protected override bool ShouldRender() => !_freeze;
 
@@ -72,10 +88,11 @@ else
         {
             rom = _game.RelativePath,
             engine = EngineBase(),
+            slot = _slot,
         });
     }
 
-    private async Task Save() => await JS.InvokeVoidAsync("pixelpipePlayer.saveState");
+    private async Task Save() => await JS.InvokeVoidAsync("pixelpipePlayer.saveState", _slot);
 
-    private async Task Load() => await JS.InvokeVoidAsync("pixelpipePlayer.loadState");
+    private async Task Load() => await JS.InvokeVoidAsync("pixelpipePlayer.loadState", _slot);
 }

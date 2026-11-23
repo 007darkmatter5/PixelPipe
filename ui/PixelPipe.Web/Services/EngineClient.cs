@@ -1,3 +1,4 @@
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -31,7 +32,14 @@ public sealed class EngineClient
         try
         {
             var client = _http.CreateClient("engine");
-            using var response = await client.PostAsJsonAsync(path, body, cancellationToken);
+            using var request = new HttpRequestMessage(HttpMethod.Post, path)
+            {
+                Content = JsonContent.Create(body),
+            };
+            request.Headers.Authorization = new AuthenticationHeaderValue(
+                "Bearer",
+                EngineTokens.Issue("service", "Admin", TimeSpan.FromMinutes(5)));
+            using var response = await client.SendAsync(request, cancellationToken);
         }
         catch
         {

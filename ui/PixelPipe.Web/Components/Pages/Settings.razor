@@ -1,4 +1,5 @@
 @page "/settings"
+@attribute [Authorize]
 @inject LibraryService Library
 @inject EngineClient Engine
 @inject UpdateService Updates
@@ -141,6 +142,28 @@
             }
         </MudPaper>
     </MudItem>
+    <AuthorizeView Roles="Admin">
+        <MudItem xs="12">
+            <MudPaper Class="pa-4" Elevation="0">
+                <MudText Typo="Typo.h6">Remote play</MudText>
+                <MudText Typo="Typo.body2" Class="mud-text-secondary">
+                    The browser stays on this site. Signaling is proxied to the engine, and remote video uses TURN.
+                    On the LAN, a direct connection is still preferred.
+                </MudText>
+                <MudCheckBox T="bool" @bind-Value="_behindProxy" Label="Behind a reverse proxy (honour X-Forwarded-Proto and X-Forwarded-For)" />
+                <MudTextField @bind-Value="_publicUrl" Label="Public URL" HelperText="https://pixelpipe.lv426.cloud" Class="mt-2" />
+                <MudText Typo="Typo.subtitle2" Class="mt-4">Cloudflare Realtime TURN</MudText>
+                <MudText Typo="Typo.caption">@(_turnReady ? "A key is stored and will not be shown again." : "No Cloudflare TURN key stored.")</MudText>
+                <MudTextField @bind-Value="_turnKey" Label="TURN key ID" Class="mt-2" />
+                <MudTextField @bind-Value="_turnToken" Label="API token" InputType="InputType.Password" Class="mt-2" />
+                <MudText Typo="Typo.subtitle2" Class="mt-4">Generic TURN</MudText>
+                <MudTextField @bind-Value="_turnUrl" Label="TURN or TURNS URL" HelperText="turns:turn.example.com:443?transport=tcp" />
+                <MudTextField @bind-Value="_turnUser" Label="Username" Class="mt-2" />
+                <MudTextField @bind-Value="_turnPassword" Label="Credential" InputType="InputType.Password" HelperText="@(_turnPasswordReady ? "A credential is stored." : "")" Class="mt-2" />
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Class="mt-3" OnClick="SaveRemote">Save remote access</MudButton>
+            </MudPaper>
+        </MudItem>
+    </AuthorizeView>
 </MudGrid>
 
 @code {
@@ -154,6 +177,15 @@
     private string? _unc;
     private string? _browseParent;
     private RomFolder.Entry[]? _folders;
+    private bool _behindProxy;
+    private string _publicUrl = "";
+    private string? _turnKey;
+    private string? _turnToken;
+    private string _turnUrl = "";
+    private string _turnUser = "";
+    private string? _turnPassword;
+    private bool _turnReady;
+    private bool _turnPasswordReady;
 
     protected override async Task OnInitializedAsync()
     {
@@ -161,6 +193,14 @@
         _previews = _status.IncludePreviews;
         _roms = Library.RomsPath;
         _unc = RomFolder.TryUnc(_roms);
+        var site = SiteSettings.Load();
+        _behindProxy = site.BehindProxy;
+        _publicUrl = site.PublicUrl;
+        var secrets = SecretBox.Load();
+        _turnReady = secrets.HasCloudflare;
+        _turnPasswordReady = !string.IsNullOrEmpty(secrets.GenericCredential);
+        _turnUrl = secrets.GenericUrl ?? "";
+        _turnUser = secrets.GenericUsername ?? "";
         _health = await Engine.HealthAsync();
         var encoders = await Engine.GetAsync("api/encoders");
         if (encoders is { } doc && doc.TryGetProperty("probes", out var probes))
@@ -255,5 +295,34 @@
         {
             _status = Updates.Snapshot;
         }
+    }
+
+    private void SaveRemote()
+    {
+        SiteSettings.Save(new SiteSettings { BehindProxy = _behindProxy, PublicUrl = _publicUrl ?? "" });
+        var secrets = SecretBox.Load();
+        if (!string.IsNullOrWhiteSpace(_turnKey))
+        {
+            secrets.CloudflareKeyId = _turnKey.Trim();
+        }
+
+        if (!string.IsNullOrWhiteSpace(_turnToken))
+        {
+            secrets.CloudflareToken = _turnToken.Trim();
+        }
+
+        secrets.GenericUrl = (_turnUrl ?? "").Trim();
+        secrets.GenericUsername = (_turnUser ?? "").Trim();
+        if (!string.IsNullOrWhiteSpace(_turnPassword))
+        {
+            secrets.GenericCredential = _turnPassword;
+        }
+
+        SecretBox.Save(secrets);
+        _turnKey = null;
+        _turnToken = null;
+        _turnPassword = null;
+        _turnReady = secrets.HasCloudflare;
+        _turnPasswordReady = !string.IsNullOrEmpty(secrets.GenericCredential);
     }
 }

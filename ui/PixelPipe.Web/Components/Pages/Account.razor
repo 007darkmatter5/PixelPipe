@@ -1,0 +1,59 @@
+@page "/account"
+@attribute [Authorize]
+@inject AccountStore Accounts
+@inject AuthenticationStateProvider Auth
+
+<PageTitle>Account · PixelPipe</PageTitle>
+<MudText Typo="Typo.h4">Account</MudText>
+<MudText Typo="Typo.body2" Class="mt-2">@_name (@_role)</MudText>
+<MudTextField @bind-Value="_current" Label="Current password" InputType="InputType.Password" Class="mt-4" />
+<MudTextField @bind-Value="_next" Label="New password" InputType="InputType.Password" Class="mt-2" />
+<MudButton Variant="Variant.Filled" Color="Color.Primary" Class="mt-3" OnClick="Change">Change password</MudButton>
+@if (!string.IsNullOrEmpty(_message))
+{
+    <MudAlert Severity="Severity.Info" Class="mt-3">@_message</MudAlert>
+}
+
+@code {
+    private string? _id;
+    private string _name = "";
+    private string _role = "";
+    private string _current = "";
+    private string _next = "";
+    private string? _message;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await Auth.GetAuthenticationStateAsync();
+        _id = state.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        _name = state.User.Identity?.Name ?? "";
+        _role = state.User.IsInRole("Admin") ? "Admin" : "User";
+    }
+
+    private void Change()
+    {
+        if (_id is null)
+        {
+            return;
+        }
+
+        var check = Accounts.CheckPassword(_name, _current);
+        if (!check.Ok)
+        {
+            _message = "The current password is wrong.";
+            return;
+        }
+
+        try
+        {
+            Accounts.SetPassword(_id, _next);
+            _message = "Password updated.";
+            _current = "";
+            _next = "";
+        }
+        catch (Exception ex)
+        {
+            _message = ex.Message;
+        }
+    }
+}

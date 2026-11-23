@@ -33,6 +33,18 @@ NVENC on a real NVIDIA GPU, and this installer on a real Windows 11 desktop, sti
 SHA256 is in PixelPipe-Setup.exe.sha256.
 "@
 }
+elseif ($tag -eq 'v0.3.0-preview') {
+    $title = 'PixelPipe 0.3.0 preview (Windows)'
+    $notes = @"
+Sign in is required. The first visit creates an admin account. Admins manage players. Save states and battery RAM are stored per person and per game, so two players do not share progress.
+
+The browser talks only to port 8080. Signaling is proxied to the engine. Remote play through a Cloudflare Tunnel uses TURN, including Cloudflare Realtime TURN. On the LAN a direct connection still wins.
+
+The download is PixelPipe-Setup-0.3.0.exe. Installing it over an existing copy keeps config.json and saves. See docs/remote-access-cloudflare.md.
+
+SHA256 is in PixelPipe-Setup-0.3.0.exe.sha256.
+"@
+}
 elseif ($tag -eq 'v0.2.3-preview') {
     $title = 'PixelPipe 0.2.3 preview (Windows)'
     $notes = @"
