@@ -49,7 +49,8 @@ public static class AuthPages
         token,
         """
         <label>Username <input name="username" autocomplete="username" required /></label>
-        <label>Password <input name="password" type="password" autocomplete="current-password" required /></label>
+        <label>Password <input id="pw" name="password" type="password" autocomplete="current-password" required /></label>
+        <label><input type="checkbox" style="width:auto" onclick="document.getElementById('pw').type=this.checked?'text':'password'" /> Show password</label>
         <label><input type="checkbox" name="remember" value="1" style="width:auto" /> Remember me</label>
         """,
         error);
@@ -61,7 +62,9 @@ public static class AuthPages
         """
         <p>This is the first time PixelPipe has been opened. The admin can add players and change settings.</p>
         <label>Admin username <input name="username" autocomplete="username" required /></label>
-        <label>Password <input name="password" type="password" autocomplete="new-password" required /></label>
+        <label>Password <input id="pw" name="password" type="password" autocomplete="new-password" required /></label>
+        <label>Confirm password <input id="pw2" name="confirm" type="password" autocomplete="new-password" required /></label>
+        <label><input type="checkbox" style="width:auto" onclick="for (const id of ['pw','pw2']) document.getElementById(id).type=this.checked?'text':'password'" /> Show password</label>
         """,
         error);
 

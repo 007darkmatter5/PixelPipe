@@ -9,7 +9,9 @@
 <MudPaper Class="pa-4 mb-4" Elevation="0">
     <MudText Typo="Typo.h6">New account</MudText>
     <MudTextField @bind-Value="_username" Label="Username" Class="mt-2" />
-    <MudTextField @bind-Value="_password" Label="Password" InputType="InputType.Password" Class="mt-2" />
+    <MudTextField @bind-Value="_password" Label="Password" InputType="@_input" Class="mt-2" />
+    <MudTextField @bind-Value="_confirm" Label="Confirm password" InputType="@_input" Class="mt-2" />
+    <MudCheckBox T="bool" Value="_show" ValueChanged="ToggleShow" Label="Show password" />
     <MudSelect T="string" @bind-Value="_role" Label="Role" Class="mt-2">
         <MudSelectItem Value="@("User")">User</MudSelectItem>
         <MudSelectItem Value="@("Admin")">Admin</MudSelectItem>
@@ -25,9 +27,12 @@
 {
     <MudPaper Class="pa-4 mb-2" Elevation="0">
         <MudText Typo="Typo.subtitle1">@user.Username · @user.Role @(user.Disabled ? "(disabled)" : "")</MudText>
-        <MudTextField @bind-Value="_resets[user.Id]" Label="New password" InputType="InputType.Password" Class="mt-2" />
+        <MudText Typo="Typo.caption">@(user.LockoutUntil is not null ? "Locked" : "")</MudText>
+        <MudTextField @bind-Value="_resets[user.Id]" Label="New password" InputType="@_input" Class="mt-2" />
+        <MudTextField @bind-Value="_resetConfirm[user.Id]" Label="Confirm password" InputType="@_input" Class="mt-2" />
         <MudStack Row="true" Class="mt-2">
             <MudButton Variant="Variant.Outlined" OnClick="@(() => Reset(user))">Reset password</MudButton>
+            <MudButton Variant="Variant.Outlined" OnClick="@(() => Unlock(user))">Unlock</MudButton>
             <MudButton Variant="Variant.Outlined" OnClick="@(() => Toggle(user))">@(user.Disabled ? "Enable" : "Disable")</MudButton>
             <MudButton Variant="Variant.Outlined" Color="Color.Error" OnClick="@(() => Remove(user))">Delete</MudButton>
         </MudStack>
@@ -37,10 +42,14 @@
 @code {
     private string _username = "";
     private string _password = "";
+    private string _confirm = "";
     private string _role = "User";
+    private bool _show;
+    private InputType _input = InputType.Password;
     private string? _message;
     private List<AccountUser> _users = new();
     private Dictionary<string, string> _resets = new();
+    private Dictionary<string, string> _resetConfirm = new();
 
     protected override void OnInitialized() => Reload();
 
@@ -50,17 +59,26 @@
         foreach (var user in _users)
         {
             _resets.TryAdd(user.Id, "");
+            _resetConfirm.TryAdd(user.Id, "");
         }
     }
 
     private void Create()
     {
+        var mismatch = PasswordRules.Check(_password, _confirm);
+        if (mismatch is not null)
+        {
+            _message = mismatch;
+            return;
+        }
+
         try
         {
             Accounts.Create(_username, _password, _role);
             _username = "";
             _password = "";
-            _message = "Account created.";
+            _confirm = "";
+            _message = "Account created. The password does not need the user's current one.";
             Reload();
         }
         catch (Exception ex)
@@ -71,16 +89,39 @@
 
     private void Reset(AccountUser user)
     {
+        var mismatch = PasswordRules.Check(_resets.GetValueOrDefault(user.Id), _resetConfirm.GetValueOrDefault(user.Id));
+        if (mismatch is not null)
+        {
+            _message = mismatch;
+            return;
+        }
+
         try
         {
             Accounts.SetPassword(user.Id, _resets.GetValueOrDefault(user.Id) ?? "");
+            Accounts.ClearLockout(user.Id);
             _resets[user.Id] = "";
-            _message = "Password reset.";
+            _resetConfirm[user.Id] = "";
+            _message = $"Password reset for {user.Username}. Their old password is no longer required.";
+            Reload();
         }
         catch (Exception ex)
         {
             _message = ex.Message;
         }
+    }
+
+    private void Unlock(AccountUser user)
+    {
+        Accounts.ClearLockout(user.Id);
+        _message = $"{user.Username} is unlocked.";
+        Reload();
+    }
+
+    private void ToggleShow(bool show)
+    {
+        _show = show;
+        _input = show ? InputType.Text : InputType.Password;
     }
 
     private void Toggle(AccountUser user)

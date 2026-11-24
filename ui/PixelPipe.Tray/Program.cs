@@ -49,6 +49,7 @@ internal sealed class TrayApplication : ApplicationContext
         menu.Items.Add("Open PixelPipe", null, (_, _) => OpenSite());
         menu.Items.Add("Open log folder", null, (_, _) => OpenLogs());
         menu.Items.Add("Check for updates", null, (_, _) => _ = CheckForUpdates(announce: true));
+        menu.Items.Add("Reset admin password…", null, (_, _) => ResetAdminPassword());
         _updateItem = new ToolStripMenuItem("Update") { Visible = false };
         _updateItem.Click += (_, _) => _ = ApplyUpdate();
         menu.Items.Add(_updateItem);
@@ -66,7 +67,9 @@ internal sealed class TrayApplication : ApplicationContext
         OfferRomFolder();
         RememberUnc();
         StartChildren();
+        AnnounceUpdated();
         _ = WatchUpdates();
+        _ = WatchUpdateProgress();
     }
 
     private readonly ToolStripMenuItem _updateItem;
@@ -116,15 +119,230 @@ internal sealed class TrayApplication : ApplicationContext
 
     private async Task ApplyUpdate()
     {
+        ShowProgress("Starting the update…", 0, false);
+        Toast("PixelPipe update", "Downloading the installer.");
+        UpdateLog("starting update from the tray");
         try
         {
             using var client = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
             using var body = new StringContent("{\"confirm\":true}", System.Text.Encoding.UTF8, "application/json");
             await client.PostAsync("http://127.0.0.1:8080/api/app/update/apply", body);
+            Toast("PixelPipe update", "Installing. Windows will ask for permission.");
+            ShowProgress("Installing. Windows will ask for permission.", 100, false);
         }
         catch (Exception ex)
         {
             AppendLog(ex.Message);
+            UpdateLog(ex.Message);
+            Toast("PixelPipe update failed", ex.Message);
+        }
+    }
+
+    private async Task WatchUpdateProgress()
+    {
+        string? lastPhase = null;
+        while (!_quitting)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(2));
+            try
+            {
+                using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+                using var response = await client.GetAsync("http://127.0.0.1:8080/api/app/update");
+                if (!response.IsSuccessStatusCode)
+                {
+                    continue;
+                }
+
+                using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+                var root = doc.RootElement;
+                var phase = root.TryGetProperty("phase", out var phaseValue) ? phaseValue.GetString() : "idle";
+                var done = root.TryGetProperty("bytesDownloaded", out var doneValue) ? doneValue.GetInt64() : 0;
+                var total = root.TryGetProperty("bytesTotal", out var totalValue) && totalValue.ValueKind == JsonValueKind.Number
+                    ? totalValue.GetInt64()
+                    : (long?)null;
+                var percent = total is > 0 ? (int)Math.Min(100, done * 100 / total.Value) : 0;
+                _ui.BeginInvoke(new Action(() =>
+                {
+                    if (phase is "downloading" or "verifying" or "installing" or "checking")
+                    {
+                        var text = phase switch
+                        {
+                            "downloading" => total is > 0
+                                ? $"Downloading {done / 1048576.0:0.0} MB of {total.Value / 1048576.0:0.0} MB"
+                                : $"Downloading {done / 1048576.0:0.0} MB",
+                            "verifying" => "Verifying the checksum…",
+                            "installing" => "Installing. Windows will ask for permission.",
+                            _ => "Checking for the update…",
+                        };
+                        ShowProgress(text, percent, phase == "downloading" && total is not > 0);
+                        _icon.Text = TrimTip($"PixelPipe — {text}");
+                        _icon.Icon = SystemIcons.Information;
+                        if (phase != lastPhase)
+                        {
+                            Toast("PixelPipe update", text);
+                            UpdateLog(text);
+                            lastPhase = phase;
+                        }
+                    }
+                    else if (lastPhase is not null)
+                    {
+                        HideProgress();
+                        _icon.Text = "PixelPipe";
+                        _icon.Icon = SystemIcons.Application;
+                        lastPhase = null;
+                    }
+                }));
+            }
+            catch
+            {
+                // The UI is restarting.
+            }
+        }
+    }
+
+    private void AnnounceUpdated()
+    {
+        try
+        {
+            var path = Path.Combine(_dataDir, "update-notice.json");
+            if (!File.Exists(path))
+            {
+                return;
+            }
+
+            using var doc = JsonDocument.Parse(File.ReadAllText(path));
+            var tag = doc.RootElement.TryGetProperty("tag", out var value) ? value.GetString() : null;
+            if (string.IsNullOrWhiteSpace(tag))
+            {
+                return;
+            }
+
+            var version = typeof(Program).Assembly.GetName().Version;
+            var current = version is null ? "" : $"{version.Major}.{version.Minor}.{version.Build}";
+            var bare = tag.TrimStart('v', 'V');
+            var dash = bare.IndexOf('-');
+            if (dash >= 0)
+            {
+                bare = bare[..dash];
+            }
+
+            if (!string.Equals(bare, current, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            Toast("PixelPipe", $"Updated to {tag}.");
+            UpdateLog($"updated to {tag}");
+            _icon.Text = TrimTip($"PixelPipe — updated to {tag}");
+        }
+        catch
+        {
+            // A missing notice just means this was a normal start.
+        }
+    }
+
+    private void ShowProgress(string text, int percent, bool unknown)
+    {
+        if (_progress is null || _progress.IsDisposed)
+        {
+            _progress = new UpdateProgressForm();
+            _progress.Show();
+        }
+
+        _progress.Detail.Text = text;
+        _progress.Bar.Style = unknown ? ProgressBarStyle.Marquee : ProgressBarStyle.Continuous;
+        if (!unknown)
+        {
+            _progress.Bar.Value = percent;
+        }
+    }
+
+    private void HideProgress()
+    {
+        if (_progress is null || _progress.IsDisposed)
+        {
+            return;
+        }
+
+        _progress.Close();
+        _progress = null;
+    }
+
+    private void Toast(string title, string message)
+    {
+        _icon.ShowBalloonTip(8000, title, message, ToolTipIcon.Info);
+    }
+
+    private static string TrimTip(string text) => text.Length <= 63 ? text : text[..63];
+
+    private void UpdateLog(string message)
+    {
+        try
+        {
+            File.AppendAllText(
+                Path.Combine(_dataDir, "pixelpipe.log"),
+                $"{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss} update: {message}{Environment.NewLine}");
+        }
+        catch
+        {
+            // The tray log is optional.
+        }
+    }
+
+    private UpdateProgressForm? _progress;
+
+    private void ResetAdminPassword()
+    {
+        using var dialog = new ResetPasswordForm();
+        if (dialog.ShowDialog() != DialogResult.OK)
+        {
+            return;
+        }
+
+        var web = Path.Combine(_installDir, "PixelPipe.Web.exe");
+        if (!File.Exists(web))
+        {
+            MessageBox.Show("PixelPipe.Web.exe was not found next to the tray app.", "PixelPipe");
+            return;
+        }
+
+        try
+        {
+            var start = new ProcessStartInfo
+            {
+                FileName = web,
+                Arguments = "--reset-password \"" + dialog.Username.Replace("\"", "") + "\"",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardInput = true,
+                RedirectStandardError = true,
+                RedirectStandardOutput = true,
+            };
+            using var process = Process.Start(start);
+            if (process is null)
+            {
+                return;
+            }
+
+            process.StandardInput.WriteLine(dialog.Password);
+            process.StandardInput.WriteLine(dialog.Password);
+            process.StandardInput.Close();
+            if (!process.WaitForExit(15000))
+            {
+                process.Kill(entireProcessTree: true);
+                MessageBox.Show("The password reset did not finish.", "PixelPipe");
+                return;
+            }
+
+            var error = process.StandardError.ReadToEnd();
+            MessageBox.Show(
+                process.ExitCode == 0 ? "Password updated. Sign in with the new password." : (string.IsNullOrWhiteSpace(error) ? "Password reset failed." : error.Trim()),
+                "PixelPipe");
+            UpdateLog(process.ExitCode == 0 ? $"reset password for {dialog.Username}" : error.Trim());
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.Message, "PixelPipe");
         }
     }
 
@@ -408,6 +626,82 @@ internal sealed class TrayApplication : ApplicationContext
         catch
         {
             // The tray still has to stay up if the log folder is locked.
+        }
+    }
+
+    private sealed class UpdateProgressForm : Form
+    {
+        public Label Detail { get; }
+        public ProgressBar Bar { get; }
+
+        public UpdateProgressForm()
+        {
+            Text = "PixelPipe update";
+            FormBorderStyle = FormBorderStyle.FixedDialog;
+            ControlBox = false;
+            MaximizeBox = false;
+            MinimizeBox = false;
+            StartPosition = FormStartPosition.CenterScreen;
+            TopMost = true;
+            Width = 440;
+            Height = 150;
+            Detail = new Label { Left = 16, Top = 16, Width = 390, Height = 48 };
+            Bar = new ProgressBar { Left = 16, Top = 72, Width = 390, Height = 22, Minimum = 0, Maximum = 100 };
+            Controls.Add(Detail);
+            Controls.Add(Bar);
+        }
+    }
+
+    private sealed class ResetPasswordForm : Form
+    {
+        private readonly TextBox _user = new() { Left = 16, Top = 28, Width = 380 };
+        private readonly TextBox _password = new() { Left = 16, Top = 76, Width = 380, UseSystemPasswordChar = true };
+        private readonly TextBox _confirm = new() { Left = 16, Top = 124, Width = 380, UseSystemPasswordChar = true };
+
+        public string Username => _user.Text.Trim();
+        public string Password => _password.Text;
+
+        public ResetPasswordForm()
+        {
+            Text = "Reset admin password";
+            FormBorderStyle = FormBorderStyle.FixedDialog;
+            MaximizeBox = false;
+            MinimizeBox = false;
+            StartPosition = FormStartPosition.CenterScreen;
+            Width = 430;
+            Height = 280;
+            Controls.Add(new Label { Left = 16, Top = 8, Width = 380, Text = "Username" });
+            Controls.Add(_user);
+            Controls.Add(new Label { Left = 16, Top = 56, Width = 380, Text = "New password" });
+            Controls.Add(_password);
+            Controls.Add(new Label { Left = 16, Top = 104, Width = 380, Text = "Confirm password" });
+            Controls.Add(_confirm);
+            var show = new CheckBox { Left = 16, Top = 156, Width = 200, Text = "Show password" };
+            show.CheckedChanged += (_, _) =>
+            {
+                _password.UseSystemPasswordChar = !show.Checked;
+                _confirm.UseSystemPasswordChar = !show.Checked;
+            };
+            Controls.Add(show);
+            var ok = new Button { Text = "Reset", Left = 210, Top = 196, Width = 90 };
+            var cancel = new Button { Text = "Cancel", Left = 306, Top = 196, Width = 90, DialogResult = DialogResult.Cancel };
+            AcceptButton = ok;
+            CancelButton = cancel;
+            Controls.Add(ok);
+            Controls.Add(cancel);
+            ok.Click += (_, _) =>
+            {
+                if (_password.Text.Length < 8 || _password.Text != _confirm.Text)
+                {
+                    MessageBox.Show(
+                        _password.Text.Length < 8 ? "Password must be at least 8 characters." : "The passwords do not match.",
+                        "PixelPipe");
+                    return;
+                }
+
+                DialogResult = DialogResult.OK;
+                Close();
+            };
         }
     }
 

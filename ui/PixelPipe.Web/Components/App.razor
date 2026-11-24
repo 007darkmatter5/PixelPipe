@@ -9,6 +9,14 @@
     <HeadOutlet @rendermode="InteractiveServer" />
 </head>
 <body>
+    <div id="pp-update" hidden>
+        <div>
+            <h2 id="pp-update-title">Updating PixelPipe</h2>
+            <p id="pp-update-detail"></p>
+            <progress id="pp-update-bar" max="100" value="0" hidden></progress>
+            <p id="pp-update-error" hidden></p>
+        </div>
+    </div>
     <Routes @rendermode="InteractiveServer" />
     <script src="_framework/blazor.web.js"></script>
     <script src="_content/MudBlazor/MudBlazor.min.js"></script>

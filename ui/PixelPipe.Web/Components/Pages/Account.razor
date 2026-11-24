@@ -6,8 +6,10 @@
 <PageTitle>Account · PixelPipe</PageTitle>
 <MudText Typo="Typo.h4">Account</MudText>
 <MudText Typo="Typo.body2" Class="mt-2">@_name (@_role)</MudText>
-<MudTextField @bind-Value="_current" Label="Current password" InputType="InputType.Password" Class="mt-4" />
-<MudTextField @bind-Value="_next" Label="New password" InputType="InputType.Password" Class="mt-2" />
+<MudTextField @bind-Value="_current" Label="Current password" InputType="@_input" Class="mt-4" />
+<MudTextField @bind-Value="_next" Label="New password" InputType="@_input" Class="mt-2" />
+<MudTextField @bind-Value="_confirm" Label="Confirm password" InputType="@_input" Class="mt-2" />
+<MudCheckBox T="bool" Value="_show" ValueChanged="ToggleShow" Label="Show password" />
 <MudButton Variant="Variant.Filled" Color="Color.Primary" Class="mt-3" OnClick="Change">Change password</MudButton>
 @if (!string.IsNullOrEmpty(_message))
 {
@@ -20,6 +22,9 @@
     private string _role = "";
     private string _current = "";
     private string _next = "";
+    private string _confirm = "";
+    private bool _show;
+    private InputType _input = InputType.Password;
     private string? _message;
 
     protected override async Task OnInitializedAsync()
@@ -40,7 +45,14 @@
         var check = Accounts.CheckPassword(_name, _current);
         if (!check.Ok)
         {
-            _message = "The current password is wrong.";
+            _message = check.Error ?? "That username or password is incorrect.";
+            return;
+        }
+
+        var mismatch = PasswordRules.Check(_next, _confirm);
+        if (mismatch is not null)
+        {
+            _message = mismatch;
             return;
         }
 
@@ -50,10 +62,17 @@
             _message = "Password updated.";
             _current = "";
             _next = "";
+            _confirm = "";
         }
         catch (Exception ex)
         {
             _message = ex.Message;
         }
+    }
+
+    private void ToggleShow(bool show)
+    {
+        _show = show;
+        _input = show ? InputType.Text : InputType.Password;
     }
 }

@@ -145,7 +145,7 @@ public sealed class AccountStore
         var user = FindByName(username);
         if (user is null)
         {
-            return new PasswordCheck(false, null, "Unknown username or password.");
+            return new PasswordCheck(false, null, "That username or password is incorrect.");
         }
 
         if (user.Disabled)
@@ -155,14 +155,14 @@ public sealed class AccountStore
 
         if (user.LockoutUntil is { } until && until > DateTimeOffset.UtcNow)
         {
-            return new PasswordCheck(false, user, "This account is locked. Try again later.");
+            return new PasswordCheck(false, user, "This account is locked. An admin can unlock it, or on this PC use Reset admin password in the tray.");
         }
 
         var verified = _hasher.VerifyHashedPassword(user.Username, user.PasswordHash, password);
         if (verified == PasswordVerificationResult.Failed)
         {
             RegisterFailure(user.Id);
-            return new PasswordCheck(false, user, "Unknown username or password.");
+            return new PasswordCheck(false, user, "That username or password is incorrect.");
         }
 
         ClearFailures(user.Id);
@@ -184,6 +184,18 @@ public sealed class AccountStore
             using var cmd = db.CreateCommand();
             cmd.CommandText = "UPDATE users SET password_hash = $hash, failed_logins = 0, lockout_until = NULL WHERE id = $id";
             cmd.Parameters.AddWithValue("$hash", hash);
+            cmd.Parameters.AddWithValue("$id", id);
+            cmd.ExecuteNonQuery();
+        }
+    }
+
+    public void ClearLockout(string id)
+    {
+        lock (_gate)
+        {
+            using var db = Open();
+            using var cmd = db.CreateCommand();
+            cmd.CommandText = "UPDATE users SET failed_logins = 0, lockout_until = NULL WHERE id = $id";
             cmd.Parameters.AddWithValue("$id", id);
             cmd.ExecuteNonQuery();
         }

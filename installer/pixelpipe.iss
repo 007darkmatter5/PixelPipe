@@ -1,7 +1,7 @@
 ; PixelPipe Windows installer. Build it with scripts\build-windows.ps1.
 
 #define MyAppName "PixelPipe"
-#define MyAppVersion "0.3.0"
+#define MyAppVersion "0.3.1"
 #define MyAppPublisher "PixelPipe"
 
 [Setup]
@@ -9,8 +9,8 @@ AppId={{B7E1C4A2-9D55-4F0E-8A61-3C2D9E7F4A18}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
-VersionInfoVersion=0.3.0.0
-VersionInfoProductVersion=0.3.0
+VersionInfoVersion=0.3.1.0
+VersionInfoProductVersion=0.3.1
 DefaultDirName={autopf}\PixelPipe
 DefaultGroupName=PixelPipe
 DisableProgramGroupPage=yes
