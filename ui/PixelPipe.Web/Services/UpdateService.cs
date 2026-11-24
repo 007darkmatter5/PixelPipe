@@ -21,13 +21,21 @@ public sealed class UpdateService : BackgroundService
     {
         _log = log;
         _http = http;
+        var current = CurrentVersionString();
+        var notice = ReadNotice();
         _snapshot = new UpdateSnapshot
         {
-            CurrentVersion = CurrentVersionString(),
+            CurrentVersion = current,
             IncludePreviews = ReadIncludePreviews(),
             TokenConfigured = TokenStore.HasToken(),
             CanSelfUpdate = CanSelfUpdate(),
+            NoticeVersion = notice is not null && UpdateNotice.Matches(notice.Value.Tag, current) ? notice.Value.Tag : null,
+            NoticeUrl = notice is not null && UpdateNotice.Matches(notice.Value.Tag, current) ? notice.Value.Url : null,
         };
+        if (_snapshot.NoticeVersion is not null)
+        {
+            UpdateLog.Write($"running {_snapshot.NoticeVersion} after an update");
+        }
     }
 
     public UpdateSnapshot Snapshot
@@ -69,7 +77,8 @@ public sealed class UpdateService : BackgroundService
 
     public async Task CheckAsync(CancellationToken cancellationToken)
     {
-        Set(snapshot => snapshot with { Phase = "checking", Error = null });
+        Set(snapshot => snapshot with { Phase = "checking", Error = null, BytesDownloaded = 0, BytesTotal = null });
+        UpdateLog.Write("checking for updates");
         try
         {
             var releases = await FetchReleasesAsync(cancellationToken);
@@ -117,7 +126,10 @@ public sealed class UpdateService : BackgroundService
 
         if (!snapshot.UpdateAvailable || snapshot.ExeAssetId is null || snapshot.ShaAssetId is null || snapshot.LatestVersion is null)
         {
-            throw new InvalidOperationException("No update is ready to install.");
+            const string none = "No update is ready to install.";
+            Set(s => s with { Phase = "failed", Error = none });
+            UpdateLog.Write(none);
+            throw new InvalidOperationException(none);
         }
 
         var dir = Path.Combine(DataDir(), "updates");
@@ -129,19 +141,34 @@ public sealed class UpdateService : BackgroundService
         }
 
         var setupPath = Path.Combine(dir, fileName);
-        Set(s => s with { Phase = "downloading" });
+        Set(s => s with { Phase = "downloading", BytesDownloaded = 0, BytesTotal = null, Error = null });
+        UpdateLog.Write($"downloading {fileName}");
         var setup = await DownloadAssetAsync(snapshot.ExeAssetId.Value, cancellationToken);
         var shaText = await DownloadAssetTextAsync(snapshot.ShaAssetId.Value, cancellationToken);
         Set(s => s with { Phase = "verifying" });
+        UpdateLog.Write("verifying checksum");
         if (!ChecksumFile.Matches(setup, shaText))
         {
-            Set(s => s with { Phase = "idle", Error = "The downloaded installer did not match its SHA256 file." });
-            throw new InvalidOperationException("Checksum mismatch.");
+            const string mismatch = "The downloaded installer did not match its SHA256 file.";
+            Set(s => s with { Phase = "failed", Error = mismatch });
+            UpdateLog.Write(mismatch);
+            throw new InvalidOperationException(mismatch);
         }
 
         await File.WriteAllBytesAsync(setupPath, setup, cancellationToken);
+        WriteNotice(snapshot.LatestVersion, snapshot.ReleaseUrl);
         Set(s => s with { Phase = "installing" });
-        StartInstaller(setupPath);
+        UpdateLog.Write("installing; Windows will ask for permission");
+        try
+        {
+            StartInstaller(setupPath);
+        }
+        catch (Exception ex)
+        {
+            Set(s => s with { Phase = "failed", Error = ex.Message });
+            UpdateLog.Write($"installer did not start: {ex.Message}");
+            throw;
+        }
     }
 
     public static bool CanSelfUpdate() =>
@@ -153,7 +180,7 @@ public sealed class UpdateService : BackgroundService
             .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
         if (string.IsNullOrWhiteSpace(info))
         {
-            return "0.3.0";
+            return "0.3.1";
         }
 
         var plus = info.IndexOf('+');
@@ -271,14 +298,35 @@ public sealed class UpdateService : BackgroundService
     {
         using var request = AssetRequest(id);
         var client = _http.CreateClient("github");
-        using var response = await client.SendAsync(request, cancellationToken);
+        using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         if (response.StatusCode is System.Net.HttpStatusCode.NotFound or System.Net.HttpStatusCode.Unauthorized)
         {
             throw new UpdateAccessException(PrivateRepoMessage);
         }
 
         response.EnsureSuccessStatusCode();
-        return await response.Content.ReadAsByteArrayAsync(cancellationToken);
+        var total = response.Content.Headers.ContentLength;
+        Set(s => s with { BytesTotal = total, BytesDownloaded = 0 });
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        using var memory = new MemoryStream();
+        var buffer = new byte[64 * 1024];
+        long read = 0;
+        long reported = 0;
+        int count;
+        while ((count = await stream.ReadAsync(buffer, cancellationToken)) > 0)
+        {
+            memory.Write(buffer, 0, count);
+            read += count;
+            if (read - reported >= 256 * 1024 || (total is not null && read >= total))
+            {
+                reported = read;
+                var downloaded = read;
+                Set(s => s with { BytesDownloaded = downloaded, BytesTotal = total });
+            }
+        }
+
+        UpdateLog.Write($"downloaded {read} bytes");
+        return memory.ToArray();
     }
 
     private async Task<string> DownloadAssetTextAsync(long id, CancellationToken cancellationToken)
@@ -310,30 +358,71 @@ public sealed class UpdateService : BackgroundService
 
     private static void StartInstaller(string setupPath)
     {
-        var tray = Path.Combine(InstallDir(), "PixelPipe.Tray.exe");
-        var modePath = Path.Combine(DataDir(), "launch-mode.txt");
-        var script = Path.Combine(DataDir(), "updates", "apply-update.ps1");
-        var body = $$"""
-            $ErrorActionPreference = 'Continue'
-            Start-Sleep -Seconds 2
-            $proc = Start-Process -FilePath '{{setupPath.Replace("'", "''")}}' -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/CLOSEAPPLICATIONS' -Wait -PassThru
-            if (Test-Path '{{modePath.Replace("'", "''")}}') {
-              $mode = (Get-Content '{{modePath.Replace("'", "''")}}' -Raw).Trim()
-              if ($mode -eq 'tray' -and (Test-Path '{{tray.Replace("'", "''")}}')) {
-                Start-Process -FilePath '{{tray.Replace("'", "''")}}'
-              }
-            }
-            exit $proc.ExitCode
-            """;
-        File.WriteAllText(script, body);
+        // /SILENT keeps Inno's progress window on screen. /VERYSILENT is what made
+        // the installer flash and disappear. The setup manifest asks for admin,
+        // so Windows shows UAC. No hidden PowerShell window is involved.
+        UpdateLog.Write($"launching {setupPath} /SILENT");
         Process.Start(new ProcessStartInfo
         {
-            FileName = "powershell.exe",
-            Arguments = $"-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"{script}\"",
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            WindowStyle = ProcessWindowStyle.Hidden,
+            FileName = setupPath,
+            Arguments = "/SILENT /NORESTART /CLOSEAPPLICATIONS /FORCECLOSEAPPLICATIONS",
+            UseShellExecute = true,
         });
+    }
+
+    public void AcknowledgeNotice()
+    {
+        try
+        {
+            var path = Path.Combine(DataDir(), "update-notice.json");
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+        catch
+        {
+            // The banner can stay if the file is locked.
+        }
+
+        Set(s => s with { NoticeVersion = null, NoticeUrl = null });
+    }
+
+    private void WriteNotice(string? tag, string? url)
+    {
+        if (string.IsNullOrWhiteSpace(tag))
+        {
+            return;
+        }
+
+        var path = Path.Combine(DataDir(), "update-notice.json");
+        File.WriteAllText(path, JsonSerializer.Serialize(new Dictionary<string, string?>
+        {
+            ["tag"] = tag,
+            ["url"] = url,
+        }));
+        UpdateLog.Write($"will announce {tag} after restart");
+    }
+
+    private static (string Tag, string? Url)? ReadNotice()
+    {
+        try
+        {
+            var path = Path.Combine(DataDir(), "update-notice.json");
+            if (!File.Exists(path))
+            {
+                return null;
+            }
+
+            using var doc = JsonDocument.Parse(File.ReadAllText(path));
+            var tag = doc.RootElement.TryGetProperty("tag", out var value) ? value.GetString() : null;
+            var url = doc.RootElement.TryGetProperty("url", out var link) ? link.GetString() : null;
+            return string.IsNullOrWhiteSpace(tag) ? null : (tag, url);
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static string InstallDir() =>
@@ -372,7 +461,7 @@ public sealed class UpdateService : BackgroundService
 
 public sealed record UpdateSnapshot
 {
-    public string CurrentVersion { get; init; } = "0.3.0";
+    public string CurrentVersion { get; init; } = "0.3.1";
     public string? LatestVersion { get; init; }
     public string? ReleaseNotes { get; init; }
     public string? ReleaseUrl { get; init; }
@@ -382,9 +471,70 @@ public sealed record UpdateSnapshot
     public bool CanSelfUpdate { get; init; }
     public string? Error { get; init; }
     public string Phase { get; init; } = "idle";
+    public long BytesDownloaded { get; init; }
+    public long? BytesTotal { get; init; }
+    public string? NoticeVersion { get; init; }
+    public string? NoticeUrl { get; init; }
     public long? ExeAssetId { get; init; }
     public long? ShaAssetId { get; init; }
     public string? ExeName { get; init; }
+}
+
+public static class UpdateNotice
+{
+    public static bool Matches(string? tag, string? current)
+    {
+        if (string.IsNullOrWhiteSpace(tag) || string.IsNullOrWhiteSpace(current))
+        {
+            return false;
+        }
+
+        return Bare(tag) == Bare(current);
+    }
+
+    private static string Bare(string value)
+    {
+        var text = value.Trim();
+        if (text.StartsWith('v') || text.StartsWith('V'))
+        {
+            text = text[1..];
+        }
+
+        var plus = text.IndexOf('+');
+        if (plus >= 0)
+        {
+            text = text[..plus];
+        }
+
+        var dash = text.IndexOf('-');
+        if (dash >= 0)
+        {
+            text = text[..dash];
+        }
+
+        return text;
+    }
+}
+
+public static class UpdateLog
+{
+    public static void Write(string message)
+    {
+        try
+        {
+            var dir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+                "PixelPipe");
+            Directory.CreateDirectory(dir);
+            File.AppendAllText(
+                Path.Combine(dir, "pixelpipe.log"),
+                $"{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss} update: {message}{Environment.NewLine}");
+        }
+        catch
+        {
+            // Updating still proceeds when the log file is locked.
+        }
+    }
 }
 
 public sealed class UpdateAccessException : Exception

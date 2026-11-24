@@ -2,6 +2,7 @@ using System.Net.Http.Headers;
 using System.Security.Claims;
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Antiforgery;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.Extensions.Logging;
@@ -9,6 +10,11 @@ using MudBlazor.Services;
 using PixelPipe.Web.Services;
 using Yarp.ReverseProxy.Forwarder;
 using Yarp.ReverseProxy.Transforms;
+
+if (args is ["--reset-password", var resetUser])
+{
+    Environment.Exit(ResetPasswordCli(resetUser));
+}
 
 var builder = WebApplication.CreateBuilder(args);
 AddFileLog(builder.Logging);
@@ -27,6 +33,16 @@ static void AddFileLog(ILoggingBuilder logging)
     {
         // A read-only machine can still log to the console.
     }
+}
+
+var keyDir = Path.Combine(AppPaths.DataDirectory(), "keys");
+Directory.CreateDirectory(keyDir);
+var dataProtection = builder.Services.AddDataProtection()
+    .PersistKeysToFileSystem(new DirectoryInfo(keyDir))
+    .SetApplicationName("PixelPipe");
+if (OperatingSystem.IsWindows())
+{
+    dataProtection.ProtectKeysWithDpapi(protectToLocalMachine: true);
 }
 
 builder.Services.AddRazorComponents().AddInteractiveServerComponents();
@@ -50,6 +66,13 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
         options.SlidingExpiration = true;
         options.ExpireTimeSpan = TimeSpan.FromHours(12);
     });
+builder.Services.AddAntiforgery(options =>
+{
+    options.Cookie.Name = "PixelPipe.Antiforgery";
+    options.Cookie.HttpOnly = true;
+    options.Cookie.SameSite = SameSiteMode.Lax;
+    options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+});
 builder.Services.AddAuthorization();
 builder.Services.AddRateLimiter(options =>
 {
@@ -84,8 +107,10 @@ if (!app.Environment.IsDevelopment())
 
 app.Use(async (context, next) =>
 {
+    var peer = context.Connection.RemoteIpAddress;
+    context.Items["pixelpipe-peer"] = peer;
     var site = SiteSettings.Load();
-    if (site.BehindProxy)
+    if (ProxyTrust.IsTrustedPeer(peer, site.BehindProxy))
     {
         if (context.Request.Headers.TryGetValue("X-Forwarded-For", out var forwardedFor))
         {
@@ -96,33 +121,34 @@ app.Use(async (context, next) =>
             }
         }
 
-        if (string.IsNullOrWhiteSpace(site.PublicUrl))
+        if (context.Request.Headers.TryGetValue("X-Forwarded-Proto", out var proto))
         {
-            if (context.Request.Headers.TryGetValue("X-Forwarded-Proto", out var proto))
+            var scheme = proto.ToString().Split(',')[0].Trim();
+            if (scheme is "http" or "https")
             {
-                var scheme = proto.ToString().Split(',')[0].Trim();
-                if (scheme is "http" or "https")
-                {
-                    context.Request.Scheme = scheme;
-                }
+                context.Request.Scheme = scheme;
             }
+        }
 
-            if (context.Request.Headers.TryGetValue("X-Forwarded-Host", out var host))
+        if (context.Request.Headers.TryGetValue("X-Forwarded-Host", out var host))
+        {
+            var forwardedHost = host.ToString().Split(',')[0].Trim();
+            if (!string.IsNullOrWhiteSpace(forwardedHost))
             {
-                context.Request.Host = new HostString(host.ToString().Split(',')[0].Trim());
+                context.Request.Host = new HostString(forwardedHost);
             }
         }
     }
 
-    if (site.BehindProxy && Uri.TryCreate(site.PublicUrl, UriKind.Absolute, out var published))
-    {
-        context.Request.Scheme = published.Scheme;
-        context.Request.Host = published.IsDefaultPort
-            ? new HostString(published.Host)
-            : new HostString(published.Authority);
-    }
-
     await next();
+    if (context.Response.StatusCode == StatusCodes.Status400BadRequest
+        && (context.Request.Path == "/login" || context.Request.Path == "/setup")
+        && !context.Response.HasStarted)
+    {
+        var target = context.Request.Path + "?error=" + Uri.EscapeDataString(
+            "The sign-in form expired or the security cookie was rejected. Refresh the page and try again.");
+        context.Response.Redirect(target);
+    }
 });
 app.UseStaticFiles();
 app.UseAuthentication();
@@ -163,7 +189,16 @@ app.MapGet("/login", (HttpContext http, IAntiforgery antiforgery, AccountStore a
 }).AllowAnonymous();
 app.MapPost("/login", async (HttpContext http, IAntiforgery antiforgery, AccountStore accounts) =>
 {
-    await antiforgery.ValidateRequestAsync(http);
+    try
+    {
+        await antiforgery.ValidateRequestAsync(http);
+    }
+    catch (AntiforgeryValidationException)
+    {
+        return Results.Redirect("/login?error=" + Uri.EscapeDataString(
+            "The sign-in form expired or the security cookie was rejected. Refresh the page and try again."));
+    }
+
     var form = await http.Request.ReadFormAsync();
     var check = accounts.CheckPassword(form["username"].ToString(), form["password"].ToString());
     if (!check.Ok || check.User is null)
@@ -192,8 +227,23 @@ app.MapPost("/setup", async (HttpContext http, IAntiforgery antiforgery, Account
         return Results.Redirect("/");
     }
 
-    await antiforgery.ValidateRequestAsync(http);
+    try
+    {
+        await antiforgery.ValidateRequestAsync(http);
+    }
+    catch (AntiforgeryValidationException)
+    {
+        return Results.Redirect("/setup?error=" + Uri.EscapeDataString(
+            "The form expired or the security cookie was rejected. Refresh the page and try again."));
+    }
+
     var form = await http.Request.ReadFormAsync();
+    var mismatch = PasswordRules.Check(form["password"], form["confirm"]);
+    if (mismatch is not null)
+    {
+        return Results.Redirect("/setup?error=" + Uri.EscapeDataString(mismatch));
+    }
+
     AccountUser admin;
     try
     {
@@ -275,12 +325,27 @@ app.MapPost("/api/library/roms", async (RomPathBody body, LibraryService library
     await engine.PostAsync("api/library/root", new { path = saved.Path });
     return Results.Json(new { path = saved.Path, unc = saved.Unc, games = library.Get().Games.Count });
 }).RequireAuthorization(policy => policy.RequireRole("Admin"));
-app.MapGet("/api/app/update", (UpdateService updates) => Results.Json(updates.Snapshot)).RequireAuthorization();
+app.MapGet("/api/app/update", (UpdateService updates) => Results.Json(updates.Snapshot)).AddEndpointFilter(LocalOrSignedIn);
 app.MapPost("/api/app/update/check", async (UpdateService updates, CancellationToken cancellationToken) =>
 {
     await updates.CheckAsync(cancellationToken);
     return Results.Json(updates.Snapshot);
-}).RequireAuthorization();
+}).AddEndpointFilter(LocalOrSignedIn);
+app.MapPost("/api/app/update/ack", (UpdateService updates) =>
+{
+    updates.AcknowledgeNotice();
+    return Results.Json(updates.Snapshot);
+}).AddEndpointFilter(LocalOrSignedIn);
+app.MapGet("/api/app/update/log", () =>
+{
+    var path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "PixelPipe", "pixelpipe.log");
+    if (!File.Exists(path))
+    {
+        return Results.Text("No update log yet.", "text/plain");
+    }
+
+    return Results.Text(File.ReadAllText(path), "text/plain");
+}).AddEndpointFilter(LocalOrSignedIn);
 app.MapPost("/api/app/update/settings", async (UpdateSettingsBody body, UpdateService updates, CancellationToken cancellationToken) =>
 {
     updates.SaveSettings(body.IncludePreviews, body.Token, body.ClearToken);
@@ -299,12 +364,69 @@ app.MapPost("/api/app/update/apply", async (HttpContext http, UpdateApplyBody bo
     {
         return Results.Json(new { error = ex.Message, snapshot = updates.Snapshot }, statusCode: StatusCodes.Status400BadRequest);
     }
-}).RequireAuthorization();
+}).AddEndpointFilter(LocalOrSignedIn);
 
 app.MapRazorComponents<PixelPipe.Web.Components.App>()
     .AddInteractiveServerRenderMode();
 
 app.Run();
+
+static async ValueTask<object?> LocalOrSignedIn(EndpointFilterInvocationContext context, EndpointFilterDelegate next)
+{
+    var http = context.HttpContext;
+    var signedIn = http.User.Identity?.IsAuthenticated == true;
+    var peer = http.Items["pixelpipe-peer"] as System.Net.IPAddress ?? http.Connection.RemoteIpAddress;
+    var local = peer is null || System.Net.IPAddress.IsLoopback(peer);
+    if (!signedIn && !local)
+    {
+        return Results.Unauthorized();
+    }
+
+    return await next(context);
+}
+
+static int ResetPasswordCli(string username)
+{
+    string password;
+    string confirm;
+    if (Console.IsInputRedirected)
+    {
+        password = Console.In.ReadLine() ?? "";
+        confirm = Console.In.ReadLine() ?? "";
+    }
+    else
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            ResetConsole.Attach();
+        }
+
+        Console.Write("New password: ");
+        password = Console.ReadLine() ?? "";
+        Console.Write("Confirm password: ");
+        confirm = Console.ReadLine() ?? "";
+    }
+
+    var problem = PasswordRules.Check(password, confirm);
+    if (problem is not null)
+    {
+        Console.Error.WriteLine(problem);
+        return 1;
+    }
+
+    var accounts = new AccountStore();
+    var user = accounts.FindByName(username);
+    if (user is null)
+    {
+        Console.Error.WriteLine($"No account named {username}.");
+        return 1;
+    }
+
+    accounts.SetPassword(user.Id, password);
+    accounts.ClearLockout(user.Id);
+    Console.WriteLine($"Password updated for {user.Username}.");
+    return 0;
+}
 
 static async Task SignInAsync(HttpContext http, AccountUser user, bool remember)
 {
@@ -327,6 +449,27 @@ static async Task SignInAsync(HttpContext http, AccountUser user, bool remember)
 }
 
 internal sealed record SessionStartBody(string Rom, string? Slot);
+
+public partial class Program
+{
+}
+
+static class ResetConsole
+{
+    public static void Attach()
+    {
+        if (!AttachConsole(-1))
+        {
+            AllocConsole();
+        }
+    }
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+    private static extern bool AttachConsole(int processId);
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+    private static extern bool AllocConsole();
+}
 
 internal sealed record RomPathBody(string Path);
 internal sealed record UpdateSettingsBody(bool IncludePreviews, string? Token, bool ClearToken);

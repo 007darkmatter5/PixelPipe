@@ -47,17 +47,24 @@ function Stop-PixelPipe {
 }
 
 function Wait-PixelPipeUi {
-    for ($i = 0; $i -lt 40; $i++) {
-        try {
-            $response = Invoke-WebRequest -Uri 'http://127.0.0.1:8080' -UseBasicParsing -TimeoutSec 5
-            if ($response.StatusCode -eq 200) {
-                return
+    $client = [System.Net.Http.HttpClient]::new()
+    $client.Timeout = [TimeSpan]::FromSeconds(5)
+    try {
+        for ($i = 0; $i -lt 40; $i++) {
+            try {
+                $response = $client.GetAsync('http://127.0.0.1:8080').GetAwaiter().GetResult()
+                if ([int]$response.StatusCode -eq 200) {
+                    return
+                }
             }
+            catch {
+                Write-Host "waiting for http://127.0.0.1:8080 ($($i + 1))"
+            }
+            Start-Sleep -Seconds 3
         }
-        catch {
-            Write-Host "waiting for http://127.0.0.1:8080 ($($i + 1))"
-        }
-        Start-Sleep -Seconds 3
+    }
+    finally {
+        $client.Dispose()
     }
     $engineLog = 'C:\ProgramData\PixelPipe\pixelpipe.log'
     if (Test-Path $engineLog) {

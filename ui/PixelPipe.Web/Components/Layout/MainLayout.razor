@@ -27,6 +27,16 @@
         <MudButton Href="/logout" Variant="Variant.Text" Color="Color.Inherit">Sign out</MudButton>
     </MudAppBar>
     <MudMainContent Class="main-content">
+        @if (!string.IsNullOrWhiteSpace(Updates.Snapshot.NoticeVersion))
+        {
+            <MudAlert Severity="Severity.Success" Class="mb-4" ShowCloseIcon="true" CloseIconClicked="AckNotice">
+                Updated to @Updates.Snapshot.NoticeVersion.
+                @if (!string.IsNullOrWhiteSpace(Updates.Snapshot.NoticeUrl))
+                {
+                    <MudLink Href="@Updates.Snapshot.NoticeUrl" Target="_blank">Release notes</MudLink>
+                }
+            </MudAlert>
+        }
         @Body
     </MudMainContent>
 </MudLayout>
@@ -52,6 +62,8 @@
             await InvokeAsync(StateHasChanged);
         }
     }
+
+    private void AckNotice() => Updates.AcknowledgeNotice();
 
     public void Dispose() => _timer?.Dispose();
 

@@ -19,6 +19,8 @@ public class AccountTests
         var locked = store.CheckPassword("ada", "correct-horse");
         Assert.False(locked.Ok);
         Assert.Contains("locked", locked.Error, StringComparison.OrdinalIgnoreCase);
+        store.ClearLockout(store.FindByName("ada")!.Id);
+        Assert.True(store.CheckPassword("ada", "correct-horse").Ok);
     }
 
     [Fact]

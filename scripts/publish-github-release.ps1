@@ -33,6 +33,18 @@ NVENC on a real NVIDIA GPU, and this installer on a real Windows 11 desktop, sti
 SHA256 is in PixelPipe-Setup.exe.sha256.
 "@
 }
+elseif ($tag -eq 'v0.3.1-preview') {
+    $title = 'PixelPipe 0.3.1 preview (Windows)'
+    $notes = @"
+Update progress is visible in the browser and the tray, and the installer shows its own progress window instead of a flash. That new progress UI is in this build, so it appears on the update after this one. Updating from 0.3.0 still uses the 0.3.0 updater.
+
+Sign-in through a Cloudflare Tunnel keeps the HTTPS host. Password forms ask you to confirm the password. If the admin password was typed wrong, reset it on the PC from the tray menu Reset admin password. That reset is not available through the website.
+
+The download is PixelPipe-Setup-0.3.1.exe. Installing it over an existing copy keeps config.json, accounts, and saves.
+
+SHA256 is in PixelPipe-Setup-0.3.1.exe.sha256.
+"@
+}
 elseif ($tag -eq 'v0.3.0-preview') {
     $title = 'PixelPipe 0.3.0 preview (Windows)'
     $notes = @"
