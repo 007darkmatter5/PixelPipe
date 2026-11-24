@@ -150,7 +150,7 @@
                     The browser stays on this site. Signaling is proxied to the engine, and remote video uses TURN.
                     On the LAN, a direct connection is still preferred.
                 </MudText>
-                <MudCheckBox T="bool" @bind-Value="_behindProxy" Label="Behind a reverse proxy (honour X-Forwarded-Proto and X-Forwarded-For)" />
+                <MudCheckBox T="bool" @bind-Value="_behindProxy" Label="Trust forwarded headers from any address. A proxy on the private LAN, such as cloudflared on Unraid, is already trusted." />
                 <MudTextField @bind-Value="_publicUrl" Label="Public URL" HelperText="https://pixelpipe.lv426.cloud" Class="mt-2" />
                 <MudText Typo="Typo.subtitle2" Class="mt-4">Cloudflare Realtime TURN</MudText>
                 <MudText Typo="Typo.caption">@(_turnReady ? "A key is stored and will not be shown again." : "No Cloudflare TURN key stored.")</MudText>
