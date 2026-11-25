@@ -6,9 +6,13 @@
     <RootNamespace>PixelPipe.Web</RootNamespace>
     <Version>0.3.2</Version>
   </PropertyGroup>
-  <!-- The Windows publish must not open a console. Docker keeps the console host. -->
+  <!-- The Windows publish is a GUI app and includes the password dialog.
+       Docker and the tests stay on net8.0 and keep a console host. -->
   <PropertyGroup Condition="$(RuntimeIdentifier.StartsWith('win'))">
+    <TargetFramework>net8.0-windows</TargetFramework>
     <OutputType>WinExe</OutputType>
+    <UseWindowsForms>true</UseWindowsForms>
+    <DefineConstants>$(DefineConstants);WINDOWS_UI</DefineConstants>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.10" />

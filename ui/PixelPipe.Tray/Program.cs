@@ -310,12 +310,6 @@ internal sealed class TrayApplication : ApplicationContext
 
     private void ResetAdminPassword()
     {
-        using var dialog = new ResetPasswordForm();
-        if (dialog.ShowDialog() != DialogResult.OK)
-        {
-            return;
-        }
-
         var web = Path.Combine(_installDir, "PixelPipe.Web.exe");
         if (!File.Exists(web))
         {
@@ -323,36 +317,19 @@ internal sealed class TrayApplication : ApplicationContext
             return;
         }
 
-        var request = Path.Combine(Path.GetTempPath(), "pixelpipe-reset-" + Guid.NewGuid().ToString("N"));
-        var result = request + ".result";
         try
         {
-            File.WriteAllText(request, dialog.Username + "\n" + dialog.Password + "\n" + dialog.Password + "\n");
-            MessageBox.Show("Windows will ask for permission to change the password.", "PixelPipe");
+            // One elevated process shows the password dialog, writes the database, and
+            // reports success. The same window opens for PixelPipe.Web.exe --reset-password.
             Process.Start(new ProcessStartInfo
             {
                 FileName = web,
-                Arguments = "--reset-password-file \"" + request + "\"",
+                Arguments = "--reset-password",
+                WorkingDirectory = _installDir,
                 UseShellExecute = true,
                 Verb = "runas",
             });
-            var deadline = DateTime.UtcNow.AddSeconds(60);
-            while (!File.Exists(result) && DateTime.UtcNow < deadline)
-            {
-                Thread.Sleep(300);
-            }
-
-            if (!File.Exists(result))
-            {
-                MessageBox.Show("The password reset did not finish. If you cancelled the permission prompt, nothing was changed.", "PixelPipe");
-                return;
-            }
-
-            var text = File.ReadAllText(result).Trim();
-            var ok = text.StartsWith("0", StringComparison.Ordinal);
-            var message = text.Length > 2 ? text[2..].Trim() : (ok ? "Password updated. Sign in with the new password." : "The password was not changed.");
-            MessageBox.Show(message, "PixelPipe");
-            UpdateLog(ok ? $"reset password for {dialog.Username}" : message);
+            UpdateLog("opened elevated password reset");
         }
         catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 1223)
         {
@@ -361,18 +338,6 @@ internal sealed class TrayApplication : ApplicationContext
         catch (Exception ex)
         {
             MessageBox.Show("Could not reset the password: " + ex.Message, "PixelPipe");
-        }
-        finally
-        {
-            try
-            {
-                if (File.Exists(request)) File.Delete(request);
-                if (File.Exists(result)) File.Delete(result);
-            }
-            catch
-            {
-                // Temp files are removed on the next reboot if they stay behind.
-            }
         }
     }
 
@@ -679,59 +644,6 @@ internal sealed class TrayApplication : ApplicationContext
             Bar = new ProgressBar { Left = 16, Top = 72, Width = 390, Height = 22, Minimum = 0, Maximum = 100 };
             Controls.Add(Detail);
             Controls.Add(Bar);
-        }
-    }
-
-    private sealed class ResetPasswordForm : Form
-    {
-        private readonly TextBox _user = new() { Left = 16, Top = 28, Width = 380 };
-        private readonly TextBox _password = new() { Left = 16, Top = 76, Width = 380, UseSystemPasswordChar = true };
-        private readonly TextBox _confirm = new() { Left = 16, Top = 124, Width = 380, UseSystemPasswordChar = true };
-
-        public string Username => _user.Text.Trim();
-        public string Password => _password.Text;
-
-        public ResetPasswordForm()
-        {
-            Text = "Reset admin password";
-            FormBorderStyle = FormBorderStyle.FixedDialog;
-            MaximizeBox = false;
-            MinimizeBox = false;
-            StartPosition = FormStartPosition.CenterScreen;
-            Width = 430;
-            Height = 280;
-            Controls.Add(new Label { Left = 16, Top = 8, Width = 380, Text = "Username" });
-            Controls.Add(_user);
-            Controls.Add(new Label { Left = 16, Top = 56, Width = 380, Text = "New password" });
-            Controls.Add(_password);
-            Controls.Add(new Label { Left = 16, Top = 104, Width = 380, Text = "Confirm password" });
-            Controls.Add(_confirm);
-            var show = new CheckBox { Left = 16, Top = 156, Width = 200, Text = "Show password" };
-            show.CheckedChanged += (_, _) =>
-            {
-                _password.UseSystemPasswordChar = !show.Checked;
-                _confirm.UseSystemPasswordChar = !show.Checked;
-            };
-            Controls.Add(show);
-            var ok = new Button { Text = "Reset", Left = 210, Top = 196, Width = 90 };
-            var cancel = new Button { Text = "Cancel", Left = 306, Top = 196, Width = 90, DialogResult = DialogResult.Cancel };
-            AcceptButton = ok;
-            CancelButton = cancel;
-            Controls.Add(ok);
-            Controls.Add(cancel);
-            ok.Click += (_, _) =>
-            {
-                if (_password.Text.Length < 8 || _password.Text != _confirm.Text)
-                {
-                    MessageBox.Show(
-                        _password.Text.Length < 8 ? "Password must be at least 8 characters." : "The passwords do not match.",
-                        "PixelPipe");
-                    return;
-                }
-
-                DialogResult = DialogResult.OK;
-                Close();
-            };
         }
     }
 

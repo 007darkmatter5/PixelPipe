@@ -103,6 +103,115 @@ function Show-InstallLog {
     }
 }
 
+function Get-HtmlToken([string]$Html) {
+    $match = [regex]::Match($Html, 'name="__RequestVerificationToken" value="([^"]+)"')
+    if (-not $match.Success) {
+        $snippet = if ($Html.Length -gt 400) { $Html.Substring(0, 400) } else { $Html }
+        throw "the page did not include a security token: $snippet"
+    }
+    return [System.Net.WebUtility]::HtmlDecode($match.Groups[1].Value)
+}
+
+function Invoke-ResetStdin([string]$Username, [string]$Password, [string]$Confirm) {
+    $psi = [System.Diagnostics.ProcessStartInfo]::new()
+    $psi.FileName = Join-Path $InstallDir 'PixelPipe.Web.exe'
+    $psi.Arguments = "--reset-password $Username --password-stdin"
+    $psi.WorkingDirectory = $InstallDir
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardInput = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.CreateNoWindow = $true
+    $proc = [System.Diagnostics.Process]::Start($psi)
+    $proc.StandardInput.WriteLine($Password)
+    $proc.StandardInput.WriteLine($Confirm)
+    $proc.StandardInput.Close()
+    if (-not $proc.WaitForExit(30000)) {
+        try { $proc.Kill() } catch { }
+        throw 'PixelPipe.Web.exe --reset-password --password-stdin did not exit'
+    }
+    $stdout = $proc.StandardOutput.ReadToEnd()
+    $stderr = $proc.StandardError.ReadToEnd()
+    Write-Host "reset exit $($proc.ExitCode) stdout=$stdout stderr=$stderr"
+    return [pscustomobject]@{ Code = $proc.ExitCode; Stdout = $stdout; Stderr = $stderr }
+}
+
+function New-FormBody([hashtable]$Fields) {
+    $pairs = [System.Collections.Generic.List[System.Collections.Generic.KeyValuePair[string, string]]]::new()
+    foreach ($key in $Fields.Keys) {
+        $pairs.Add([System.Collections.Generic.KeyValuePair[string, string]]::new($key, [string]$Fields[$key]))
+    }
+    return [System.Net.Http.FormUrlEncodedContent]::new($pairs)
+}
+
+function Assert-PasswordReset {
+    $acl = (& icacls.exe 'C:\ProgramData\PixelPipe' | Out-String)
+    if ($acl -notmatch 'Users:.*\(OI\).*\(CI\).*M') {
+        throw "Users modify permission is missing on %ProgramData%\PixelPipe: $acl"
+    }
+    Write-Host 'ProgramData\PixelPipe grants Users modify'
+
+    $handler = [System.Net.Http.HttpClientHandler]::new()
+    $handler.AllowAutoRedirect = $false
+    $handler.UseCookies = $true
+    $client = [System.Net.Http.HttpClient]::new($handler)
+    $client.Timeout = [TimeSpan]::FromSeconds(20)
+    try {
+        $setup = $client.GetAsync('http://127.0.0.1:8080/setup').GetAwaiter().GetResult()
+        $html = $setup.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+        if ([int]$setup.StatusCode -ne 200) {
+            throw "setup page returned $([int]$setup.StatusCode)"
+        }
+        $token = Get-HtmlToken $html
+        $old = 'old-password'
+        $created = $client.PostAsync('http://127.0.0.1:8080/setup', (New-FormBody @{
+            __RequestVerificationToken = $token
+            username = 'Darkmatter5'
+            password = $old
+            confirm = $old
+        })).GetAwaiter().GetResult()
+        $createdAt = ''
+        if ($created.Headers.Location) { $createdAt = $created.Headers.Location.OriginalString }
+        if ([int]$created.StatusCode -ne 302 -or $createdAt -match 'error=') {
+            throw "setup did not create the admin (status $([int]$created.StatusCode) location $createdAt)"
+        }
+        if (-not (Test-Path 'C:\ProgramData\PixelPipe\accounts.db')) {
+            throw 'accounts.db was not created under %ProgramData%\PixelPipe'
+        }
+        if (Test-Path 'C:\Program Files\PixelPipe\accounts.db') {
+            throw 'accounts.db was created under Program Files'
+        }
+
+        $mismatch = Invoke-ResetStdin 'Darkmatter5' 'new-password' 'other-password'
+        if ($mismatch.Code -eq 0 -or $mismatch.Stderr -notmatch 'do not match') {
+            throw "mismatched --password-stdin should fail: $($mismatch.Stderr)"
+        }
+
+        $reset = Invoke-ResetStdin 'Darkmatter5' 'new-password' 'new-password'
+        if ($reset.Code -ne 0 -or $reset.Stdout -notmatch 'Password updated') {
+            throw "password reset failed: $($reset.Stderr) $($reset.Stdout)"
+        }
+
+        $login = $client.GetAsync('http://127.0.0.1:8080/login').GetAwaiter().GetResult()
+        $loginHtml = $login.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+        $loginToken = Get-HtmlToken $loginHtml
+        $signedIn = $client.PostAsync('http://127.0.0.1:8080/login', (New-FormBody @{
+            __RequestVerificationToken = $loginToken
+            username = 'Darkmatter5'
+            password = 'new-password'
+        })).GetAwaiter().GetResult()
+        $signedAt = ''
+        if ($signedIn.Headers.Location) { $signedAt = $signedIn.Headers.Location.OriginalString }
+        if ([int]$signedIn.StatusCode -ne 302 -or $signedAt -match 'error=') {
+            throw "sign-in with the reset password failed (status $([int]$signedIn.StatusCode) location $signedAt)"
+        }
+        Write-Host 'reset via --password-stdin and sign-in with the new password succeeded'
+    }
+    finally {
+        $client.Dispose()
+    }
+}
+
 if (-not (Test-Path $Setup)) {
     throw "Installer not found: $Setup"
 }
@@ -152,6 +261,7 @@ Write-Host "config.json roms=$($cfg.roms)"
 
 Wait-PixelPipeUi
 Write-Host 'UI responded on http://127.0.0.1:8080'
+Assert-PasswordReset
 
 $installed = @(Get-PixelPipeUninstallKeys)
 if ($installed.Count -ne 1) {

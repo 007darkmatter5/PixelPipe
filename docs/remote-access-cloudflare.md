@@ -11,7 +11,7 @@ Run `cloudflared` on the Unraid host (or on the PixelPipe desktop) and publish o
 
 Do not publish port 9090. The engine stays on the machine. New Windows installs bind it to `127.0.0.1:9090`.
 
-Sign-in through the tunnel uses the same account as on the desktop. Forwarded HTTPS headers from a proxy on the private LAN are trusted, so the browser session is Secure and the Blazor connection accepts `https://pixelpipe.lv426.cloud`. A public client that reaches port 8080 directly cannot spoof those headers. If the admin password was mistyped when the account was created, reset it on the PC from the tray: **Reset admin password…**. That dialog is not available through the tunnel.
+Sign-in through the tunnel uses the same account as on the desktop. Forwarded HTTPS headers from a proxy on the private LAN are trusted, so the browser session is Secure and the Blazor connection accepts `https://pixelpipe.lv426.cloud`. A public client that reaches port 8080 directly cannot spoof those headers. If the admin password was mistyped when the account was created, reset it on the PC. The tray item **Reset admin password…** asks Windows for permission and then opens the password window. The same window opens from an elevated Command Prompt with `PixelPipe.Web.exe --reset-password YourName`. That reset is not available through the tunnel.
 
 In PixelPipe Settings, as an admin:
 
