@@ -87,10 +87,15 @@ public sealed class UpdateService : BackgroundService
                 : new AppVersion(0, 0, 0, null);
             var include = Snapshot.IncludePreviews;
             var newer = ReleaseSelection.NewerThan(releases, current, include);
+            var message = newer is not null
+                ? $"Update {newer.Tag} available"
+                : $"You're up to date (v{CurrentVersionString()})";
+            UpdateLog.Write(message);
             Set(snapshot => snapshot with
             {
                 Phase = "idle",
                 Error = null,
+                StatusMessage = message,
                 LatestVersion = newer?.Tag,
                 ReleaseNotes = newer?.Notes,
                 ReleaseUrl = newer?.HtmlUrl,
@@ -102,12 +107,14 @@ public sealed class UpdateService : BackgroundService
         }
         catch (UpdateAccessException ex)
         {
-            Set(snapshot => snapshot with { Phase = "idle", Error = ex.Message, UpdateAvailable = false });
+            UpdateLog.Write("update check failed: " + ex.Message);
+            Set(snapshot => snapshot with { Phase = "idle", Error = ex.Message, StatusMessage = ex.Message, UpdateAvailable = false });
         }
         catch (Exception ex)
         {
             _log.LogWarning("Update check failed: {Message}", ex.Message);
-            Set(snapshot => snapshot with { Phase = "idle", Error = ex.Message, UpdateAvailable = false });
+            UpdateLog.Write("update check failed: " + ex.Message);
+            Set(snapshot => snapshot with { Phase = "idle", Error = ex.Message, StatusMessage = ex.Message, UpdateAvailable = false });
         }
     }
 
@@ -176,11 +183,17 @@ public sealed class UpdateService : BackgroundService
 
     public static string CurrentVersionString()
     {
+        var forced = Environment.GetEnvironmentVariable("PIXELPIPE_VERSION");
+        if (!string.IsNullOrWhiteSpace(forced))
+        {
+            return forced.Trim();
+        }
+
         var info = Assembly.GetExecutingAssembly()
             .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
         if (string.IsNullOrWhiteSpace(info))
         {
-            return "0.3.3";
+            return "0.3.4";
         }
 
         var plus = info.IndexOf('+');
@@ -206,20 +219,8 @@ public sealed class UpdateService : BackgroundService
 
     private async Task<IReadOnlyList<RemoteRelease>> FetchReleasesAsync(CancellationToken cancellationToken)
     {
-        using var request = new HttpRequestMessage(
-            HttpMethod.Get,
-            $"https://api.github.com/repos/{Repo}/releases?per_page=30");
-        AddGitHubHeaders(request, assetDownload: false);
         var client = _http.CreateClient("github");
-        using var response = await client.SendAsync(request, cancellationToken);
-        if (response.StatusCode is System.Net.HttpStatusCode.NotFound or System.Net.HttpStatusCode.Unauthorized)
-        {
-            throw new UpdateAccessException(PrivateRepoMessage);
-        }
-
-        response.EnsureSuccessStatusCode();
-        var json = await response.Content.ReadAsStringAsync(cancellationToken);
-        return ParseReleases(json);
+        return await GitHubReleases.LoadAsync(client, TokenStore.Load(), Repo, cancellationToken);
     }
 
     public static IReadOnlyList<RemoteRelease> ParseReleases(string json)
@@ -461,7 +462,7 @@ public sealed class UpdateService : BackgroundService
 
 public sealed record UpdateSnapshot
 {
-    public string CurrentVersion { get; init; } = "0.3.3";
+    public string CurrentVersion { get; init; } = "0.3.4";
     public string? LatestVersion { get; init; }
     public string? ReleaseNotes { get; init; }
     public string? ReleaseUrl { get; init; }
@@ -470,6 +471,7 @@ public sealed record UpdateSnapshot
     public bool TokenConfigured { get; init; }
     public bool CanSelfUpdate { get; init; }
     public string? Error { get; init; }
+    public string? StatusMessage { get; init; }
     public string Phase { get; init; } = "idle";
     public long BytesDownloaded { get; init; }
     public long? BytesTotal { get; init; }
@@ -513,6 +515,108 @@ public static class UpdateNotice
         }
 
         return text;
+    }
+}
+
+public static class GitHubReleases
+{
+    public static async Task<IReadOnlyList<RemoteRelease>> LoadAsync(
+        HttpClient client,
+        string? token,
+        string repo,
+        CancellationToken cancellationToken)
+    {
+        var listUrl = $"https://api.github.com/repos/{repo}/releases?per_page=30";
+        string listJson;
+        try
+        {
+            listJson = await GetAsync(client, listUrl, token, cancellationToken);
+        }
+        catch (UpdateAccessException) when (!string.IsNullOrWhiteSpace(token))
+        {
+            UpdateLog.Write("GitHub rejected the saved token. Checking the public release list.");
+            token = null;
+            listJson = await GetAsync(client, listUrl, token, cancellationToken);
+        }
+
+        var releases = UpdateService.ParseReleases(listJson).ToList();
+        var known = new HashSet<string>(releases.Select(release => release.Tag), StringComparer.OrdinalIgnoreCase);
+        UpdateLog.Write("release list: " + (known.Count == 0 ? "none" : string.Join(", ", known)));
+        var tagsJson = await GetAsync(client, $"https://api.github.com/repos/{repo}/tags?per_page=20", token, cancellationToken);
+        var extras = 0;
+        foreach (var tag in ParseTagNames(tagsJson))
+        {
+            if (known.Contains(tag) || !AppVersion.TryParse(tag, out _) || extras >= 8)
+            {
+                continue;
+            }
+
+            try
+            {
+                var one = await GetAsync(
+                    client,
+                    $"https://api.github.com/repos/{repo}/releases/tags/{Uri.EscapeDataString(tag)}",
+                    token,
+                    cancellationToken);
+                var parsed = UpdateService.ParseReleases("[" + one + "]");
+                if (parsed.Count == 0)
+                {
+                    continue;
+                }
+
+                releases.Add(parsed[0]);
+                known.Add(tag);
+                extras++;
+                UpdateLog.Write($"release list omitted {tag}; loaded it by tag");
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                UpdateLog.Write($"could not load release {tag}: {ex.Message}");
+            }
+        }
+
+        return releases;
+    }
+
+    public static IReadOnlyList<string> ParseTagNames(string json)
+    {
+        using var doc = JsonDocument.Parse(json);
+        var names = new List<string>();
+        if (doc.RootElement.ValueKind != JsonValueKind.Array)
+        {
+            return names;
+        }
+
+        foreach (var item in doc.RootElement.EnumerateArray())
+        {
+            var name = item.TryGetProperty("name", out var value) ? value.GetString() : null;
+            if (!string.IsNullOrWhiteSpace(name))
+            {
+                names.Add(name);
+            }
+        }
+
+        return names;
+    }
+
+    private static async Task<string> GetAsync(HttpClient client, string url, string? token, CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+        request.Headers.UserAgent.ParseAdd("PixelPipe");
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
+        if (!string.IsNullOrWhiteSpace(token))
+        {
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        }
+
+        using var response = await client.SendAsync(request, cancellationToken);
+        if (response.StatusCode is System.Net.HttpStatusCode.NotFound or System.Net.HttpStatusCode.Unauthorized)
+        {
+            throw new UpdateAccessException(UpdateService.PrivateRepoMessage);
+        }
+
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadAsStringAsync(cancellationToken);
     }
 }
 
@@ -570,12 +674,20 @@ public static class TokenStore
             return null;
         }
 
-        var stored = File.ReadAllBytes(PathName);
-        var bytes = OperatingSystem.IsWindows()
-            ? ProtectedData.Unprotect(stored, null, DataProtectionScope.CurrentUser)
-            : stored;
-        var token = System.Text.Encoding.UTF8.GetString(bytes);
-        return string.IsNullOrWhiteSpace(token) ? null : token;
+        try
+        {
+            var stored = File.ReadAllBytes(PathName);
+            var bytes = OperatingSystem.IsWindows()
+                ? ProtectedData.Unprotect(stored, null, DataProtectionScope.CurrentUser)
+                : stored;
+            var token = System.Text.Encoding.UTF8.GetString(bytes);
+            return string.IsNullOrWhiteSpace(token) ? null : token;
+        }
+        catch (Exception ex)
+        {
+            UpdateLog.Write("saved GitHub token could not be read, so the public release list is used: " + ex.Message);
+            return null;
+        }
     }
 
     public static void Clear()

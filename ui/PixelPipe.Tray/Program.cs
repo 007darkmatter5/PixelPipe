@@ -48,7 +48,7 @@ internal sealed class TrayApplication : ApplicationContext
         var menu = new ContextMenuStrip();
         menu.Items.Add("Open PixelPipe", null, (_, _) => OpenSite());
         menu.Items.Add("Open log folder", null, (_, _) => OpenLogs());
-        menu.Items.Add("Check for updates", null, (_, _) => _ = CheckForUpdates(announce: true));
+        menu.Items.Add("Check for updates", null, (_, _) => _ = CheckForUpdates(announce: true, fromUser: true));
         menu.Items.Add("Reset admin password…", null, (_, _) => ResetAdminPassword());
         _updateItem = new ToolStripMenuItem("Update") { Visible = false };
         _updateItem.Click += (_, _) => _ = ApplyUpdate();
@@ -80,41 +80,63 @@ internal sealed class TrayApplication : ApplicationContext
         await Task.Delay(TimeSpan.FromSeconds(25));
         while (!_quitting)
         {
-            await CheckForUpdates(announce: true);
+            await CheckForUpdates(announce: true, fromUser: false);
             await Task.Delay(TimeSpan.FromHours(12));
         }
     }
 
-    private async Task CheckForUpdates(bool announce)
+    private async Task CheckForUpdates(bool announce, bool fromUser)
     {
         try
         {
             using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
             using var response = await client.PostAsync("http://127.0.0.1:8080/api/app/update/check", new StringContent(""));
+            var body = await response.Content.ReadAsStringAsync();
             if (!response.IsSuccessStatusCode)
             {
+                ReportUpdate($"Update check failed ({(int)response.StatusCode}).", announce: fromUser, available: false, latest: null);
                 return;
             }
 
-            using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            using var doc = JsonDocument.Parse(body);
             var root = doc.RootElement;
             var available = root.TryGetProperty("updateAvailable", out var flag) && flag.GetBoolean();
             var latest = root.TryGetProperty("latestVersion", out var version) ? version.GetString() : null;
-            _ui.BeginInvoke(new Action(() =>
+            var current = root.TryGetProperty("currentVersion", out var currentValue) ? currentValue.GetString() : null;
+            var message = root.TryGetProperty("statusMessage", out var status) ? status.GetString() : null;
+            if (string.IsNullOrWhiteSpace(message))
             {
-                _latestVersion = latest;
-                _updateItem.Visible = available && !string.IsNullOrWhiteSpace(latest);
-                _updateItem.Text = available ? $"Update to {latest}" : "Update";
-                if (announce && available && !string.IsNullOrWhiteSpace(latest))
-                {
-                    _icon.ShowBalloonTip(8000, "PixelPipe update", $"Version {latest} is available.", ToolTipIcon.Info);
-                }
-            }));
+                message = available
+                    ? $"Update {latest} available"
+                    : $"You're up to date (v{current})";
+            }
+
+            ReportUpdate(message, announce && (fromUser || available), available, latest);
         }
-        catch
+        catch (Exception ex)
         {
-            // The web UI may still be starting.
+            ReportUpdate("Update check failed: " + ex.Message, announce: fromUser, available: false, latest: null);
         }
+    }
+
+    private void ReportUpdate(string message, bool announce, bool available, string? latest)
+    {
+        UpdateLog(message);
+        if (_ui.IsDisposed)
+        {
+            return;
+        }
+
+        _ui.BeginInvoke(new Action(() =>
+        {
+            _latestVersion = latest;
+            _updateItem.Visible = available && !string.IsNullOrWhiteSpace(latest);
+            _updateItem.Text = available ? $"Update to {latest}" : "Update";
+            if (announce)
+            {
+                _icon.ShowBalloonTip(8000, "PixelPipe update", message, available ? ToolTipIcon.Info : ToolTipIcon.Warning);
+            }
+        }));
     }
 
     private async Task ApplyUpdate()

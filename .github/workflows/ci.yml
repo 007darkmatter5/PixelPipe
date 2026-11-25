@@ -70,6 +70,11 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "8.0.x"
+      - name: Install Playwright Chromium
+        run: |
+          dotnet build ui/PixelPipe.Web.Tests/PixelPipe.Web.Tests.csproj -c Release --nologo
+          cli=$(find ui/PixelPipe.Web.Tests/bin/Release -path '*/.playwright/package/cli.js' | head -1)
+          node "$cli" install --with-deps chromium
       - name: Test and build the Blazor UI
         run: |
           node --test ui/player-menu.test.mjs

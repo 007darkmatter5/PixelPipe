@@ -112,6 +112,7 @@ html, body {
 
 .stage {
   position: relative;
+  isolation: isolate;
   background: #000;
   border-radius: 14px;
   overflow: hidden;
@@ -119,6 +120,8 @@ html, body {
 }
 
 .stage video, #pp-video {
+  position: relative;
+  z-index: 1;
   width: 100%;
   max-height: 72vh;
   background: #000;
@@ -143,7 +146,7 @@ html, body {
 
 .pp-menu-toggle {
   position: absolute;
-  z-index: 7;
+  z-index: 8;
   top: calc(10px + env(safe-area-inset-top));
   right: calc(10px + env(safe-area-inset-right));
   min-width: 64px;
@@ -164,13 +167,15 @@ html, body {
 .pp-menu {
   position: absolute;
   inset: 0;
-  z-index: 6;
-  display: flex;
+  z-index: 7;
+  display: none;
   align-items: center;
   justify-content: center;
 }
 
-.pp-menu[hidden] { display: none; }
+.pp-menu.pp-open { display: flex; }
+
+.pp-menu-page[hidden] { display: none; }
 
 .pp-menu-backdrop {
   position: absolute;

@@ -63,7 +63,18 @@
         <MudPaper Class="pa-4" Elevation="0">
             <MudText Typo="Typo.h6">Updates</MudText>
             <MudText Typo="Typo.body2">Installed @_status.CurrentVersion. Latest: @(_status.LatestVersion ?? "unknown").</MudText>
-            @if (!string.IsNullOrWhiteSpace(_status.Error))
+            @if (_checking)
+            {
+                <MudStack Row="true" AlignItems="AlignItems.Center" Class="mt-2">
+                    <MudProgressCircular Size="Size.Small" Indeterminate="true" />
+                    <MudText id="pp-update-status" Typo="Typo.body2">Checking for updates…</MudText>
+                </MudStack>
+            }
+            else if (!string.IsNullOrWhiteSpace(_checkMessage))
+            {
+                <MudAlert id="pp-update-status" Severity="@(_status.UpdateAvailable ? Severity.Info : string.IsNullOrWhiteSpace(_status.Error) ? Severity.Success : Severity.Warning)" Dense="true" Class="mt-2">@_checkMessage</MudAlert>
+            }
+            @if (!string.IsNullOrWhiteSpace(_status.Error) && _checkMessage != _status.Error)
             {
                 <MudAlert Severity="Severity.Warning" Dense="true" Class="mt-2">@_status.Error</MudAlert>
             }
@@ -187,6 +198,8 @@
     private bool _turnReady;
     private bool _turnPasswordReady;
     private bool _updating;
+    private bool _checking;
+    private string? _checkMessage;
 
     protected override async Task OnInitializedAsync()
     {
@@ -267,7 +280,7 @@
         _status = Updates.Snapshot;
     }
 
-    private async Task ClearToken()
+    private void ClearToken()
     {
         Updates.SaveSettings(_previews, null, clearToken: true);
         _token = null;
@@ -276,8 +289,25 @@
 
     private async Task CheckNow()
     {
-        await Updates.CheckAsync(CancellationToken.None);
-        _status = Updates.Snapshot;
+        _checking = true;
+        _checkMessage = "Checking for updates…";
+        StateHasChanged();
+        try
+        {
+            await Updates.CheckAsync(CancellationToken.None);
+            _status = Updates.Snapshot;
+            _checkMessage = string.IsNullOrWhiteSpace(_status.StatusMessage)
+                ? _status.Error ?? $"You're up to date (v{_status.CurrentVersion})"
+                : _status.StatusMessage;
+        }
+        catch (Exception ex)
+        {
+            _checkMessage = ex.Message;
+        }
+        finally
+        {
+            _checking = false;
+        }
     }
 
     private async Task UpdateNow()
@@ -288,18 +318,26 @@
         }
 
         _updating = true;
+        _checkMessage = "Starting the update…";
+        StateHasChanged();
         try
         {
             await Js.InvokeVoidAsync("pixelpipeApplyUpdate", true);
+            _status = Updates.Snapshot;
         }
-        catch
+        catch (Exception ex)
         {
             _status = Updates.Snapshot;
+            _checkMessage = string.IsNullOrWhiteSpace(_status.Error) ? ex.Message : _status.Error;
         }
         finally
         {
             _updating = false;
             _status = Updates.Snapshot;
+            if (!string.IsNullOrWhiteSpace(_status.Error))
+            {
+                _checkMessage = _status.Error;
+            }
         }
     }
 
