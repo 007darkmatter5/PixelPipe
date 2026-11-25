@@ -103,6 +103,7 @@ public sealed class UpdateService : BackgroundService
                 ExeAssetId = newer?.ExeAssetId,
                 ShaAssetId = newer?.ShaAssetId,
                 ExeName = newer?.ExeName,
+                ExeUrl = newer?.ExeUrl,
             });
         }
         catch (UpdateAccessException ex)
@@ -149,7 +150,7 @@ public sealed class UpdateService : BackgroundService
 
         var setupPath = Path.Combine(dir, fileName);
         Set(s => s with { Phase = "downloading", BytesDownloaded = 0, BytesTotal = null, Error = null });
-        UpdateLog.Write($"downloading {fileName}");
+        PixelPipe.UpdateCore.UpdaterLog.WriteStatus("downloading", "Downloading " + fileName, snapshot.LatestVersion, null);
         var setup = await DownloadAssetAsync(snapshot.ExeAssetId.Value, cancellationToken);
         var shaText = await DownloadAssetTextAsync(snapshot.ShaAssetId.Value, cancellationToken);
         Set(s => s with { Phase = "verifying" });
@@ -163,12 +164,21 @@ public sealed class UpdateService : BackgroundService
         }
 
         await File.WriteAllBytesAsync(setupPath, setup, cancellationToken);
+        if (string.IsNullOrWhiteSpace(snapshot.ExeUrl))
+        {
+            const string missing = "The release did not include a GitHub download URL.";
+            Set(s => s with { Phase = "failed", Error = missing });
+            UpdateLog.Write(missing);
+            throw new InvalidOperationException(missing);
+        }
+
         WriteNotice(snapshot.LatestVersion, snapshot.ReleaseUrl);
+        PixelPipe.UpdateCore.UpdaterLog.WriteStatus("verifying", "Asking PixelPipe Updater to install.", snapshot.LatestVersion, null);
         Set(s => s with { Phase = "installing" });
-        UpdateLog.Write("installing; Windows will ask for permission");
+        UpdateLog.Write("asking the updater service to install " + setupPath);
         try
         {
-            StartInstaller(setupPath);
+            await AskUpdaterAsync(setupPath, ChecksumFile.FirstToken(shaText) ?? "", snapshot.ExeUrl, cancellationToken);
         }
         catch (Exception ex)
         {
@@ -193,7 +203,7 @@ public sealed class UpdateService : BackgroundService
             .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
         if (string.IsNullOrWhiteSpace(info))
         {
-            return "0.3.4";
+            return "0.3.5";
         }
 
         var plus = info.IndexOf('+');
@@ -243,17 +253,21 @@ public sealed class UpdateService : BackgroundService
             long? exe = null;
             long? sha = null;
             string? exeName = null;
+            string? exeUrl = null;
             if (item.TryGetProperty("assets", out var assets))
             {
-                var installers = new List<(string Name, long Id)>();
+                var installers = new List<(string Name, long Id, string? Url)>();
                 var checksums = new List<(string Name, long Id)>();
                 foreach (var asset in assets.EnumerateArray())
                 {
                     var name = asset.GetProperty("name").GetString() ?? "";
                     var id = asset.GetProperty("id").GetInt64();
+                    var download = asset.TryGetProperty("browser_download_url", out var downloadValue)
+                        ? downloadValue.GetString()
+                        : null;
                     if (SetupAssets.IsInstaller(name))
                     {
-                        installers.Add((name, id));
+                        installers.Add((name, id, download));
                     }
                     else if (name.EndsWith(".sha256", StringComparison.OrdinalIgnoreCase))
                     {
@@ -266,6 +280,7 @@ public sealed class UpdateService : BackgroundService
                 {
                     exe = setup.Id;
                     exeName = setup.Name;
+                    exeUrl = setup.Url;
                     var checksum = checksums.FirstOrDefault(asset =>
                         asset.Name.Equals(setup.Name + ".sha256", StringComparison.OrdinalIgnoreCase));
                     if (checksum.Name is null)
@@ -289,7 +304,8 @@ public sealed class UpdateService : BackgroundService
                 item.TryGetProperty("html_url", out var url) ? url.GetString() : null,
                 exe,
                 sha,
-                exeName));
+                exeName,
+                exeUrl));
         }
 
         return list;
@@ -357,18 +373,36 @@ public sealed class UpdateService : BackgroundService
         }
     }
 
-    private static void StartInstaller(string setupPath)
+    public Task InstallVerifiedAsync(string setupPath, string sha256, string sourceUrl, CancellationToken cancellationToken)
+        => AskUpdaterAsync(setupPath, sha256, sourceUrl, cancellationToken);
+
+    private static async Task AskUpdaterAsync(string setupPath, string sha256, string sourceUrl, CancellationToken cancellationToken)
     {
-        // /SILENT keeps Inno's progress window on screen. /VERYSILENT is what made
-        // the installer flash and disappear. The setup manifest asks for admin,
-        // so Windows shows UAC. No hidden PowerShell window is involved.
-        UpdateLog.Write($"launching {setupPath} /SILENT");
-        Process.Start(new ProcessStartInfo
+        var tokenPath = Path.Combine(DataDir(), "updater.token");
+        if (!File.Exists(tokenPath))
         {
-            FileName = setupPath,
-            Arguments = "/SILENT /NORESTART /CLOSEAPPLICATIONS /FORCECLOSEAPPLICATIONS",
-            UseShellExecute = true,
+            throw new InvalidOperationException(
+                "PixelPipe Updater is not installed yet. Run the 0.3.5 installer once on this PC. After that, updates from the website finish without a permission prompt.");
+        }
+
+        var token = File.ReadAllText(tokenPath).Trim();
+        using var client = new HttpClient { Timeout = TimeSpan.FromMinutes(2) };
+        using var request = new HttpRequestMessage(HttpMethod.Post, "http://127.0.0.1:5077/install");
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+        request.Content = System.Net.Http.Json.JsonContent.Create(new
+        {
+            installerPath = setupPath,
+            sha256,
+            sourceUrl,
         });
+        using var response = await client.SendAsync(request, cancellationToken);
+        var body = await response.Content.ReadAsStringAsync(cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new InvalidOperationException(string.IsNullOrWhiteSpace(body) ? "The updater service rejected the installer." : body);
+        }
+
+        UpdateLog.Write("updater service accepted the installer");
     }
 
     public void AcknowledgeNotice()
@@ -462,7 +496,8 @@ public sealed class UpdateService : BackgroundService
 
 public sealed record UpdateSnapshot
 {
-    public string CurrentVersion { get; init; } = "0.3.4";
+    public string CurrentVersion { get; init; } = "0.3.5";
+    public string? ExeUrl { get; init; }
     public string? LatestVersion { get; init; }
     public string? ReleaseNotes { get; init; }
     public string? ReleaseUrl { get; init; }

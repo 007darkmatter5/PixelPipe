@@ -4,7 +4,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>PixelPipe.Web</RootNamespace>
-    <Version>0.3.4</Version>
+    <Version>0.3.5</Version>
   </PropertyGroup>
   <!-- The Windows publish is a GUI app and includes the password dialog.
        Docker and the tests stay on net8.0 and keep a console host. -->
@@ -14,6 +14,9 @@
     <UseWindowsForms>true</UseWindowsForms>
     <DefineConstants>$(DefineConstants);WINDOWS_UI</DefineConstants>
   </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\PixelPipe.UpdateCore\PixelPipe.UpdateCore.csproj" />
+  </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.10" />
     <PackageReference Include="Microsoft.Extensions.Identity.Core" Version="8.0.10" />

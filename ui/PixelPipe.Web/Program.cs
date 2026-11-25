@@ -162,6 +162,7 @@ app.Use(async (context, next) =>
 {
     var path = context.Request.Path;
     if (path.StartsWithSegments("/setup")
+        || path.StartsWithSegments("/health")
         || path.StartsWithSegments("/_framework")
         || path.StartsWithSegments("/_content")
         || path.StartsWithSegments("/_blazor"))
@@ -328,6 +329,56 @@ app.MapPost("/api/library/roms", async (RomPathBody body, LibraryService library
     await engine.PostAsync("api/library/root", new { path = saved.Path });
     return Results.Json(new { path = saved.Path, unc = saved.Unc, games = library.Get().Games.Count });
 }).RequireAuthorization(policy => policy.RequireRole("Admin"));
+app.MapGet("/health", (UpdateService updates) =>
+{
+    string? phase = null;
+    string? message = null;
+    string? error = null;
+    try
+    {
+        var statusPath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+            "PixelPipe",
+            "updater-status.json");
+        if (File.Exists(statusPath))
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(statusPath));
+            phase = doc.RootElement.TryGetProperty("phase", out var phaseValue) ? phaseValue.GetString() : null;
+            message = doc.RootElement.TryGetProperty("message", out var messageValue) ? messageValue.GetString() : null;
+            error = doc.RootElement.TryGetProperty("error", out var errorValue) ? errorValue.GetString() : null;
+        }
+    }
+    catch
+    {
+        // Health still reports the running version when the status file is unreadable.
+    }
+
+    return Results.Json(new
+    {
+        version = UpdateService.CurrentVersionString(),
+        phase = phase ?? updates.Snapshot.Phase,
+        message,
+        error = error ?? updates.Snapshot.Error,
+    });
+}).AllowAnonymous();
+app.MapPost("/api/app/update/install", async (HttpContext http, VerifiedInstallBody body, UpdateService updates, CancellationToken cancellationToken) =>
+{
+    var peer = http.Items["pixelpipe-peer"] as System.Net.IPAddress ?? http.Connection.RemoteIpAddress;
+    if (peer is not null && !System.Net.IPAddress.IsLoopback(peer))
+    {
+        return Results.Json(new { error = "Only this PC can start that install." }, statusCode: StatusCodes.Status403Forbidden);
+    }
+
+    try
+    {
+        await updates.InstallVerifiedAsync(body.Path, body.Sha256, body.SourceUrl, cancellationToken);
+        return Results.Json(new { accepted = true });
+    }
+    catch (Exception ex)
+    {
+        return Results.Json(new { error = ex.Message }, statusCode: StatusCodes.Status400BadRequest);
+    }
+}).AddEndpointFilter(LocalOrSignedIn);
 app.MapGet("/api/app/update", (UpdateService updates) => Results.Json(updates.Snapshot)).AddEndpointFilter(LocalOrSignedIn);
 app.MapPost("/api/app/update/check", async (UpdateService updates, CancellationToken cancellationToken) =>
 {
@@ -661,3 +712,4 @@ static class ResetConsole
 internal sealed record RomPathBody(string Path);
 internal sealed record UpdateSettingsBody(bool IncludePreviews, string? Token, bool ClearToken);
 internal sealed record UpdateApplyBody(bool Confirm);
+internal sealed record VerifiedInstallBody(string Path, string Sha256, string SourceUrl);

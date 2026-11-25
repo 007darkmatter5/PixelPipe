@@ -1,7 +1,7 @@
 ; PixelPipe Windows installer. Build it with scripts\build-windows.ps1.
 
 #define MyAppName "PixelPipe"
-#define MyAppVersion "0.3.4"
+#define MyAppVersion "0.3.5"
 #define MyAppPublisher "PixelPipe"
 
 [Setup]
@@ -9,8 +9,8 @@ AppId={{B7E1C4A2-9D55-4F0E-8A61-3C2D9E7F4A18}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
-VersionInfoVersion=0.3.4.0
-VersionInfoProductVersion=0.3.4
+VersionInfoVersion=0.3.5.0
+VersionInfoProductVersion=0.3.5
 DefaultDirName={autopf}\PixelPipe
 DefaultGroupName=PixelPipe
 DisableProgramGroupPage=yes
@@ -49,6 +49,8 @@ Filename: "{app}\PixelPipe.Tray.exe"; Description: "Start PixelPipe"; Flags: now
 Filename: "http://127.0.0.1:8080"; Description: "Open PixelPipe in the browser"; Flags: shellexec postinstall skipifsilent unchecked nowait
 
 [UninstallRun]
+Filename: "{sys}\sc.exe"; Parameters: "stop PixelPipeUpdater"; Flags: runhidden; RunOnceId: "StopPixelPipeUpdater"
+Filename: "{sys}\sc.exe"; Parameters: "delete PixelPipeUpdater"; Flags: runhidden; RunOnceId: "DeletePixelPipeUpdater"
 Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM PixelPipe.Tray.exe /T"; Flags: runhidden; RunOnceId: "StopPixelPipeTray"
 Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM PixelPipe.Web.exe /T"; Flags: runhidden; RunOnceId: "StopPixelPipeWeb"
 Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM pixelpipe-engine.exe /T"; Flags: runhidden; RunOnceId: "StopPixelPipeEngine"
@@ -89,6 +91,8 @@ begin
   DataDir := ExpandConstant('{commonappdata}\PixelPipe');
   ForceDirectories(DataDir);
   QuitFile := DataDir + '\quit.request';
+  Exec(ExpandConstant('{sys}\sc.exe'), 'stop PixelPipeUpdater', '', SW_HIDE, ewWaitUntilTerminated, I);
+  Sleep(1000);
   TrayWasRunning := ImageRunning('PixelPipe.Tray.exe');
   SaveStringToFile(QuitFile, 'quit', False);
   Sleep(2500);
@@ -277,4 +281,15 @@ begin
     { Interactive installs use the finish-page checkbox, which starts the tray. }
     Exec(App + '\PixelPipe.Tray.exe', '', '', SW_HIDE, ewNoWait, ResultCode);
   end;
+
+  { LocalSystem installs later updates with no UAC prompt, and starts the site when nobody is logged in. }
+  Exec(ExpandConstant('{sys}\sc.exe'), 'stop PixelPipeUpdater', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(ExpandConstant('{sys}\sc.exe'), 'delete PixelPipeUpdater', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(ExpandConstant('{sys}\sc.exe'),
+    'create PixelPipeUpdater binPath= "' + App + '\PixelPipe.Updater.exe" start= auto DisplayName= "PixelPipe Updater"',
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(ExpandConstant('{sys}\sc.exe'),
+    'description PixelPipeUpdater "Installs verified PixelPipe updates without asking for permission."',
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(ExpandConstant('{sys}\sc.exe'), 'start PixelPipeUpdater', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 end;

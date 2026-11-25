@@ -144,6 +144,96 @@ function New-FormBody([hashtable]$Fields) {
     return [System.Net.Http.FormUrlEncodedContent]::new($pairs)
 }
 
+function Assert-UnattendedUpdate {
+    Write-Host 'unattended update: stop the interactive apps'
+    Get-Process -Name 'PixelPipe.Tray','PixelPipe.Web','pixelpipe-engine' -ErrorAction SilentlyContinue | Stop-Process -Force
+    Start-Sleep -Seconds 2
+    $service = Get-Service -Name 'PixelPipeUpdater' -ErrorAction SilentlyContinue
+    if (-not $service) { throw 'PixelPipe Updater service was not installed' }
+    if ($service.Status -ne 'Running') { Start-Service PixelPipeUpdater }
+    $account = (Get-CimInstance Win32_Service -Filter "Name='PixelPipeUpdater'").StartName
+    if ($account -notmatch 'LocalSystem|NT AUTHORITY\\SYSTEM') { throw "PixelPipe Updater is running as $account" }
+    Write-Host "PixelPipe Updater is running as $account"
+
+    $back = $false
+    $version = ''
+    for ($i = 0; $i -lt 20; $i++) {
+        try {
+            $client = [System.Net.Http.HttpClient]::new()
+            $client.Timeout = [TimeSpan]::FromSeconds(3)
+            $body = $client.GetStringAsync('http://127.0.0.1:8080/health').GetAwaiter().GetResult()
+            $client.Dispose()
+            if ($body -match '"version"\s*:\s*"([^"]+)"') {
+                $version = $Matches[1]
+                if ($version -eq '0.3.5') { $back = $true; break }
+            }
+        }
+        catch {
+            # The service is still starting the site.
+        }
+        Start-Sleep -Seconds 3
+    }
+    if (-not $back) { throw "updater did not bring 0.3.5 back without an interactive app (last version '$version')" }
+    Write-Host 'site came back from the updater service'
+
+    $token = (Get-Content 'C:\ProgramData\PixelPipe\updater.token' -Raw).Trim()
+    $client = [System.Net.Http.HttpClient]::new()
+    $client.Timeout = [TimeSpan]::FromSeconds(30)
+    $client.DefaultRequestHeaders.Authorization = [System.Net.Http.Headers.AuthenticationHeaderValue]::new('Bearer', $token)
+    $bad = $client.PostAsync(
+        'http://127.0.0.1:8080/api/app/update/install',
+        [System.Net.Http.StringContent]::new('{"path":"C:\\missing.exe","sha256":"' + ('a' * 64) + '","sourceUrl":"https://example.com/PixelPipe-Setup-0.3.4.exe"}', [Text.Encoding]::UTF8, 'application/json')
+    ).GetAwaiter().GetResult()
+    if ([int]$bad.StatusCode -lt 400) { throw "a non-GitHub installer was accepted ($([int]$bad.StatusCode))" }
+    Write-Host 'rejected an installer that is not a PixelPipe GitHub release'
+
+    $dest = 'C:\PixelPipeUpdateTest'
+    New-Item -ItemType Directory -Force -Path $dest | Out-Null
+    $exe = Join-Path $dest 'PixelPipe-Setup-0.3.4.exe'
+    $sum = "$exe.sha256"
+    curl.exe -fsSL -o $exe 'https://github.com/007darkmatter5/PixelPipe/releases/download/v0.3.4-preview/PixelPipe-Setup-0.3.4.exe'
+    curl.exe -fsSL -o $sum 'https://github.com/007darkmatter5/PixelPipe/releases/download/v0.3.4-preview/PixelPipe-Setup-0.3.4.exe.sha256'
+    if ($LASTEXITCODE -ne 0) { throw 'could not download the 0.3.4 installer for the unattended update test' }
+    $hash = (Get-FileHash -Algorithm SHA256 -Path $exe).Hash.ToLowerInvariant()
+    $expected = ((Get-Content $sum -Raw) -split '\s+')[0].ToLowerInvariant()
+    if ($hash -ne $expected) { throw "downloaded 0.3.4 hash is $hash" }
+    $payload = @{
+        path = $exe
+        sha256 = $hash
+        sourceUrl = 'https://github.com/007darkmatter5/PixelPipe/releases/download/v0.3.4-preview/PixelPipe-Setup-0.3.4.exe'
+    } | ConvertTo-Json -Compress
+    $accepted = $client.PostAsync(
+        'http://127.0.0.1:8080/api/app/update/install',
+        [System.Net.Http.StringContent]::new($payload, [Text.Encoding]::UTF8, 'application/json')
+    ).GetAwaiter().GetResult()
+    $acceptedText = $accepted.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+    if ([int]$accepted.StatusCode -ge 400) { throw "unattended install was rejected: $acceptedText" }
+    Write-Host "updater accepted the install: $acceptedText"
+    $client.Dispose()
+
+    $installed = $false
+    for ($i = 0; $i -lt 40; $i++) {
+        Start-Sleep -Seconds 3
+        $dll = 'C:\Program Files\PixelPipe\PixelPipe.Web.dll'
+        if (Test-Path $dll) {
+            $fileVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo($dll).FileVersion
+            try {
+                $probe = [System.Net.Http.HttpClient]::new()
+                $probe.Timeout = [TimeSpan]::FromSeconds(3)
+                $code = [int]$probe.GetAsync('http://127.0.0.1:8080/').GetAwaiter().GetResult().StatusCode
+                $probe.Dispose()
+            }
+            catch { $code = 0 }
+            if ($fileVersion -like '0.3.4*' -and $code -ge 200 -and $code -lt 500) {
+                $installed = $true
+                Write-Host "unattended installer brought up $fileVersion (HTTP $code)"
+                break
+            }
+        }
+    }
+    if (-not $installed) { throw 'the unattended installer did not bring the new version up' }
+}
+
 function Assert-PasswordReset {
     $acl = (& icacls.exe 'C:\ProgramData\PixelPipe' | Out-String)
     if ($acl -notmatch 'Users:.*\(OI\).*\(CI\).*M') {
@@ -272,6 +362,8 @@ $saveDir = 'C:\ProgramData\PixelPipe\saves'
 New-Item -ItemType Directory -Force -Path $saveDir | Out-Null
 $sentinel = Join-Path $saveDir 'upgrade-keep.txt'
 Set-Content -Path $sentinel -Value 'keep' -Encoding ascii
+
+Assert-UnattendedUpdate
 
 $running = @(Get-Process -Name 'PixelPipe.Tray','PixelPipe.Web','pixelpipe-engine' -ErrorAction SilentlyContinue)
 if ($running.Count -lt 1) { throw 'PixelPipe was not running before the in-place upgrade' }

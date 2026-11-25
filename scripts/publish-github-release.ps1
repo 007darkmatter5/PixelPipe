@@ -33,6 +33,20 @@ NVENC on a real NVIDIA GPU, and this installer on a real Windows 11 desktop, sti
 SHA256 is in PixelPipe-Setup.exe.sha256.
 "@
 }
+elseif ($tag -eq 'v0.3.5-preview') {
+    $title = 'PixelPipe 0.3.5 preview (Windows)'
+    $notes = @"
+Updates started from the website finish without a permission prompt, including when the PC is locked or nobody is logged in. The installer adds a Windows service named PixelPipe Updater. It runs as Windows itself, checks that the installer came from the PixelPipe GitHub releases and matches the published checksum, then installs it silently and starts the site again.
+
+The update page keeps its own progress overlay while PixelPipe restarts, instead of the browser's reconnect dialog. It waits until the new version answers, then reloads and says Updated to vX.
+
+Installing this 0.3.5 build over 0.3.4 still needs one manual run of PixelPipe-Setup-0.3.5.exe, because 0.3.4 asks Windows for permission and that prompt does not appear while the PC is locked. After 0.3.5 is installed, later updates do not ask.
+
+The download is PixelPipe-Setup-0.3.5.exe. Installing it over an existing copy keeps config.json, accounts, and saves.
+
+SHA256 is in PixelPipe-Setup-0.3.5.exe.sha256.
+"@
+}
 elseif ($tag -eq 'v0.3.4-preview') {
     $title = 'PixelPipe 0.3.4 preview (Windows)'
     $notes = @"
