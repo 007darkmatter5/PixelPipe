@@ -6,8 +6,6 @@ using System.Text;
 using System.Text.Json;
 using PixelPipe.UpdateCore;
 
-const int Port = 5077;
-
 var builder = Host.CreateApplicationBuilder(args);
 builder.Services.AddWindowsService(options => options.ServiceName = "PixelPipeUpdater");
 builder.Services.AddHostedService<UpdaterWorker>();
@@ -15,6 +13,7 @@ await builder.Build().RunAsync();
 
 sealed class UpdaterWorker : BackgroundService
 {
+    private const int Port = 5077;
     private readonly IHostApplicationLifetime _lifetime;
 
     public UpdaterWorker(IHostApplicationLifetime lifetime)
