@@ -13,22 +13,248 @@
     rom: "",
     slot: "1",
     iceServers: [],
+    menu: "closed",
+    index: 0,
+    paused: false,
+    started: false,
+    stopping: false,
+    starting: false,
+    chordSince: 0,
+    chordFired: false,
+    guideWas: false,
+    padUp: false,
+    padDown: false,
+    padAccept: false,
+    padBack: false,
+    idleTimer: 0,
   };
 
+  const menuApi = () => window.pixelpipeMenu;
+
   window.addEventListener("keydown", (event) => {
+    if (!document.getElementById("pp-stage")) {
+      keys.add(event.key);
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      if (state.menu === "closed") openMenu();
+      else closeMenu();
+      return;
+    }
+    if (state.menu !== "closed") {
+      event.preventDefault();
+      if (event.key === "ArrowUp") move(-1);
+      else if (event.key === "ArrowDown") move(1);
+      else if (event.key === "Enter" || event.key === " ") activate();
+      return;
+    }
     keys.add(event.key);
     if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", " "].includes(event.key)) {
       event.preventDefault();
     }
+    wakeToggle();
   });
   window.addEventListener("keyup", (event) => keys.delete(event.key));
+  window.addEventListener("pointermove", wakeToggle);
+  window.addEventListener("touchstart", wakeToggle, { passive: true });
+  window.addEventListener("pagehide", beaconStop);
+  requestAnimationFrame(tick);
+  whenStage(ensureMenu);
 
   function hud(text) {
     const el = document.getElementById("pp-hud");
     if (el && text) el.textContent = text;
   }
 
+  function whenStage(fn) {
+    const now = document.getElementById("pp-stage");
+    if (now) {
+      fn(now);
+      return;
+    }
+    const obs = new MutationObserver(() => {
+      const stage = document.getElementById("pp-stage");
+      if (!stage) return;
+      obs.disconnect();
+      fn(stage);
+    });
+    if (document.body) obs.observe(document.body, { childList: true, subtree: true });
+  }
+
+  function ensureMenu() {
+    const stage = document.getElementById("pp-stage");
+    if (!stage || document.getElementById("pp-menu-toggle")) return;
+    const toggle = document.createElement("button");
+    toggle.id = "pp-menu-toggle";
+    toggle.type = "button";
+    toggle.className = "pp-menu-toggle idle";
+    toggle.textContent = "Menu";
+    toggle.setAttribute("aria-label", "Game menu");
+    toggle.addEventListener("click", (event) => {
+      event.stopPropagation();
+      toggleMenu();
+    });
+    const overlay = document.createElement("div");
+    overlay.id = "pp-menu";
+    overlay.className = "pp-menu";
+    overlay.hidden = true;
+    const backdrop = document.createElement("button");
+    backdrop.type = "button";
+    backdrop.className = "pp-menu-backdrop";
+    backdrop.setAttribute("aria-label", "Close menu");
+    backdrop.addEventListener("click", closeMenu);
+    const panel = document.createElement("div");
+    panel.id = "pp-menu-panel";
+    panel.className = "pp-menu-panel";
+    panel.setAttribute("role", "dialog");
+    panel.setAttribute("aria-modal", "true");
+    panel.setAttribute("aria-label", "Game menu");
+    panel.addEventListener("click", (event) => event.stopPropagation());
+    overlay.appendChild(backdrop);
+    overlay.appendChild(panel);
+    const badge = document.createElement("div");
+    badge.id = "pp-paused";
+    badge.className = "pp-paused";
+    badge.hidden = true;
+    badge.textContent = "Paused";
+    stage.appendChild(toggle);
+    stage.appendChild(overlay);
+    stage.appendChild(badge);
+    wakeToggle();
+  }
+
+  function wakeToggle() {
+    const toggle = document.getElementById("pp-menu-toggle");
+    if (!toggle) return;
+    toggle.classList.remove("idle");
+    window.clearTimeout(state.idleTimer);
+    state.idleTimer = window.setTimeout(() => {
+      if (state.menu === "closed") toggle.classList.add("idle");
+    }, menuApi()?.IDLE_MS || 2500);
+  }
+
+  function items() {
+    return menuApi().itemsFor(state.menu === "closed" ? "main" : state.menu, state.paused);
+  }
+
+  function renderMenu() {
+    const overlay = document.getElementById("pp-menu");
+    const panel = document.getElementById("pp-menu-panel");
+    const badge = document.getElementById("pp-paused");
+    if (!overlay || !panel) return;
+    if (badge) badge.hidden = !state.paused;
+    overlay.hidden = state.menu === "closed";
+    panel.replaceChildren();
+    if (state.menu === "closed") return;
+    wakeToggle();
+    const title = document.createElement("p");
+    title.className = "pp-menu-title";
+    title.textContent =
+      state.menu === "save" ? "Save state" :
+      state.menu === "load" ? "Load state" :
+      state.menu === "reset" ? "Reset this game?" :
+      state.paused ? "Paused" : "Menu";
+    panel.appendChild(title);
+    items().forEach((item, index) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = item.label;
+      if (index === state.index) button.setAttribute("aria-current", "true");
+      button.addEventListener("click", () => {
+        state.index = index;
+        activate();
+      });
+      panel.appendChild(button);
+    });
+  }
+
+  function openMenu() {
+    ensureMenu();
+    if (state.menu === "closed") {
+      state.menu = "main";
+      state.index = 0;
+    }
+    keys.clear();
+    renderMenu();
+  }
+
+  function closeMenu() {
+    state.menu = "closed";
+    state.index = 0;
+    renderMenu();
+  }
+
+  function toggleMenu() {
+    if (state.menu === "closed") openMenu();
+    else closeMenu();
+  }
+
+  function move(delta) {
+    const count = items().length;
+    state.index = menuApi().moveIndex(state.index, delta, count);
+    renderMenu();
+  }
+
+  async function activate() {
+    const item = items()[state.index];
+    if (!item) return;
+    if (state.menu === "save" || state.menu === "load") {
+      if (item.id === "back") {
+        const returning = state.menu;
+        state.menu = "main";
+        state.index = returning === "save" ? 2 : 3;
+        renderMenu();
+        return;
+      }
+      if (state.menu === "save") await saveState(item.id);
+      else await loadState(item.id);
+      closeMenu();
+      return;
+    }
+    if (state.menu === "reset") {
+      if (item.id === "yes") await resetGame();
+      state.menu = "main";
+      state.index = 4;
+      renderMenu();
+      return;
+    }
+    if (item.id === "resume") {
+      await setPaused(false);
+      closeMenu();
+      return;
+    }
+    if (item.id === "pause") {
+      await setPaused(!state.paused);
+      renderMenu();
+      return;
+    }
+    if (item.id === "save" || item.id === "load" || item.id === "reset") {
+      state.menu = item.id;
+      state.index = item.id === "reset" ? 1 : 0;
+      renderMenu();
+      return;
+    }
+    if (item.id === "fullscreen") {
+      toggleFullscreen();
+      return;
+    }
+    if (item.id === "quit") await quitToLibrary();
+  }
+
+  function toggleFullscreen() {
+    const stage = document.getElementById("pp-stage");
+    if (!stage) return;
+    if (document.fullscreenElement) {
+      document.exitFullscreen?.();
+      return;
+    }
+    const request = stage.requestFullscreen || stage.webkitRequestFullscreen;
+    request?.call(stage);
+  }
+
   function maskFromInput() {
+    if (state.menu !== "closed" || state.paused) return 0;
     let mask = 0;
     const down = (key) => keys.has(key);
     if (down("z") || down("Z")) mask |= 1 << 0;
@@ -79,6 +305,60 @@
     state.dc.send(JSON.stringify(message));
   }
 
+  function tick() {
+    pollGamepad();
+    requestAnimationFrame(tick);
+  }
+
+  function pollGamepad() {
+    if (!document.getElementById("pp-stage") || !navigator.getGamepads) return;
+    let pad = null;
+    for (const candidate of navigator.getGamepads()) {
+      if (candidate) pad = candidate;
+    }
+    if (!pad) {
+      state.chordSince = 0;
+      state.guideWas = false;
+      return;
+    }
+    const pressed = (index) => pad.buttons[index] && (pad.buttons[index].pressed || pad.buttons[index].value > 0.5);
+    const now = performance.now();
+    if (pressed(8) && pressed(9)) {
+      if (!state.chordSince) state.chordSince = now;
+    } else {
+      state.chordSince = 0;
+    }
+    const held = state.chordSince ? now - state.chordSince : 0;
+    const kind = menuApi().hotkey(pad.buttons, held);
+    if (kind === "guide" && !state.guideWas) toggleMenu();
+    if (kind === "chord" && !state.chordFired) {
+      openMenu();
+      state.chordFired = true;
+    }
+    state.guideWas = kind === "guide";
+    if (kind !== "chord") state.chordFired = false;
+    if (kind) wakeToggle();
+    if (state.menu === "closed") return;
+    const up = pressed(12) || pad.axes[1] < -0.5;
+    const down = pressed(13) || pad.axes[1] > 0.5;
+    const accept = pressed(0);
+    const back = pressed(1);
+    if (up && !state.padUp) move(-1);
+    if (down && !state.padDown) move(1);
+    if (accept && !state.padAccept) activate();
+    if (back && !state.padBack) {
+      if (state.menu === "main") closeMenu();
+      else {
+        state.menu = "main";
+        renderMenu();
+      }
+    }
+    state.padUp = up;
+    state.padDown = down;
+    state.padAccept = accept;
+    state.padBack = back;
+  }
+
   async function waitIce(pc) {
     if (pc.iceGatheringState === "complete") return;
     await new Promise((resolve) => {
@@ -99,6 +379,7 @@
       if (!response.ok || !state.pc) return;
       const stats = await response.json();
       let line = `${stats.encoder || "h264"} ${stats.width}x${stats.height} ${Number(stats.fps).toFixed(1)} fps`;
+      if (stats.paused || state.paused) line += " · paused";
       const reports = await state.pc.getStats();
       reports.forEach((report) => {
         if (report.type === "inbound-rtp" && report.kind === "video" && report.framesDecoded) {
@@ -136,10 +417,11 @@
   }
 
   async function start(options, engineArg) {
-    if (state.pc) {
+    if (state.pc || state.starting) {
       bindStream();
       return;
     }
+    state.starting = true;
     try {
       const resolved = resolveStart(options, engineArg);
       state.engine = resolved.engine;
@@ -153,14 +435,17 @@
       });
       if (!started.ok) {
         hud(`${started.status} /api/session\n${await started.text()}`);
-        state.pc = null;
+        state.starting = false;
         return;
       }
       const startedBody = await started.json();
       state.iceServers = startedBody.iceServers || startedBody.IceServers || [];
+      state.started = true;
+      state.stopping = false;
+      ensureMenu();
     } catch (err) {
       hud(String(err));
-      state.pc = null;
+      state.starting = false;
       return;
     }
     const pc = new RTCPeerConnection({ iceServers: state.iceServers || [] });
@@ -193,6 +478,7 @@
     const offerRes = await fetch("/api/session/offer", { method: "POST", credentials: "same-origin" });
     if (!offerRes.ok) {
       hud(await offerRes.text());
+      state.starting = false;
       return;
     }
     await pc.setRemoteDescription(await offerRes.json());
@@ -207,30 +493,103 @@
     });
     if (!answered.ok) {
       hud(await answered.text());
+      state.starting = false;
       return;
     }
     document.getElementById("pp-stage")?.focus();
     state.statsTimer = setInterval(refreshStats, 1000);
+    state.starting = false;
     hud("connecting");
   }
 
-  async function saveState(slot) {
-    await fetch("/api/session/savestate", {
+  async function postJson(path, body) {
+    return fetch(path, {
       method: "POST",
       credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ slot: slot || state.slot || "1" }),
+      body: JSON.stringify(body ?? {}),
+      keepalive: true,
     });
+  }
+
+  async function saveState(slot) {
+    await postJson("/api/session/savestate", { slot: slot || state.slot || "1" });
   }
 
   async function loadState(slot) {
-    await fetch("/api/session/loadstate", {
-      method: "POST",
-      credentials: "same-origin",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ slot: slot || state.slot || "1" }),
-    });
+    await postJson("/api/session/loadstate", { slot: slot || state.slot || "1" });
   }
 
-  window.pixelpipePlayer = { start, saveState, loadState };
+  async function setPaused(paused) {
+    const response = await postJson("/api/session/pause", menuApi().pauseBody(paused));
+    if (!response.ok) return;
+    state.paused = paused;
+    const video = document.getElementById("pp-video");
+    if (video) {
+      if (paused) video.pause();
+      else video.play().catch(() => {});
+    }
+    const badge = document.getElementById("pp-paused");
+    if (badge) badge.hidden = !paused;
+  }
+
+  async function resetGame() {
+    await postJson("/api/session/reset", {});
+    if (state.paused) await setPaused(false);
+  }
+
+  function teardown() {
+    window.clearInterval(state.timer);
+    window.clearInterval(state.statsTimer);
+    state.timer = 0;
+    state.statsTimer = 0;
+    try { state.dc?.close(); } catch { /* already closed */ }
+    try { state.pc?.close(); } catch { /* already closed */ }
+    state.dc = null;
+    state.pc = null;
+    state.stream = null;
+    const video = document.getElementById("pp-video");
+    if (video) video.srcObject = null;
+    state.started = false;
+    state.starting = false;
+    state.paused = false;
+    closeMenu();
+  }
+
+  async function runQuitPlan() {
+    for (const step of menuApi().quitPlan()) {
+      try {
+        await postJson(step.path, step.body);
+      } catch {
+        /* the engine watchdog still saves if the page is already gone */
+      }
+    }
+  }
+
+  async function stop() {
+    if (!state.started || state.stopping) return;
+    state.stopping = true;
+    await runQuitPlan();
+    teardown();
+  }
+
+  function beaconStop() {
+    if (!state.started || state.stopping) return;
+    state.stopping = true;
+    for (const step of menuApi().quitPlan()) {
+      try {
+        navigator.sendBeacon(step.path, new Blob([JSON.stringify(step.body)], { type: "application/json" }));
+      } catch {
+        /* the engine ends the session after the connection drops */
+      }
+    }
+    teardown();
+  }
+
+  async function quitToLibrary() {
+    await stop();
+    location.assign("/");
+  }
+
+  window.pixelpipePlayer = { start, saveState, loadState, stop, openMenu };
 })();

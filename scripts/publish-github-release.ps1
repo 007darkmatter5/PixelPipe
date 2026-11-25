@@ -33,6 +33,18 @@ NVENC on a real NVIDIA GPU, and this installer on a real Windows 11 desktop, sti
 SHA256 is in PixelPipe-Setup.exe.sha256.
 "@
 }
+elseif ($tag -eq 'v0.3.3-preview') {
+    $title = 'PixelPipe 0.3.3 preview (Windows)'
+    $notes = @"
+The player has a menu. Open it with the Menu button in the corner (it fades while you play and stays tappable), Esc, the gamepad Guide button, or by holding Select and Start. Resume, Pause, Save state, Load state, Reset game, Fullscreen, and Quit to library are in that menu. Quit writes the auto slot, stops the game, and returns to the library. Pause stops the core, not only the picture. Closing the browser tab saves and ends the session too.
+
+Updating from 0.3.2 uses the progress window added in that version: checking, a download percent and size, checksum, install, then Reconnecting. Windows asks for permission during the install. When PixelPipe is back, a banner says Updated to v0.3.3-preview.
+
+The download is PixelPipe-Setup-0.3.3.exe. Installing it over an existing copy keeps config.json, accounts, and saves.
+
+SHA256 is in PixelPipe-Setup-0.3.3.exe.sha256.
+"@
+}
 elseif ($tag -eq 'v0.3.2-preview') {
     $title = 'PixelPipe 0.3.2 preview (Windows)'
     $notes = @"

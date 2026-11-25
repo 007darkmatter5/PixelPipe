@@ -69,6 +69,7 @@ where
         encoders: Arc::new(report),
         config: Arc::new(config),
     };
+    state.sessions.spawn_reaper();
     let bind = state.config.bind.clone();
     let app = Router::new()
         .route("/api/health", get(health))
@@ -85,6 +86,9 @@ where
         .route("/api/session/stats", get(session_stats))
         .route("/api/session/savestate", post(save_state))
         .route("/api/session/loadstate", post(load_state))
+        .route("/api/session/pause", post(session_pause))
+        .route("/api/session/reset", post(session_reset))
+        .route("/api/session/stop", post(session_stop))
         .route("/player", get(player_page))
         .layer(middleware::from_fn_with_state(state.clone(), require_auth))
         .layer(
@@ -324,6 +328,24 @@ async fn session_get(State(state): State<AppState>) -> Result<Json<serde_json::V
 async fn session_stop(State(state): State<AppState>) -> StatusCode {
     state.sessions.shutdown().await;
     StatusCode::NO_CONTENT
+}
+
+#[derive(Deserialize)]
+struct PauseBody {
+    paused: bool,
+}
+
+async fn session_pause(
+    State(state): State<AppState>,
+    Json(body): Json<PauseBody>,
+) -> Result<StatusCode, ApiError> {
+    state.sessions.set_paused(body.paused).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn session_reset(State(state): State<AppState>) -> Result<StatusCode, ApiError> {
+    state.sessions.reset().await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn session_offer(State(state): State<AppState>) -> Result<Json<SdpDto>, ApiError> {

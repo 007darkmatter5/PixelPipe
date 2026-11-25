@@ -71,4 +71,6 @@ jobs:
         with:
           dotnet-version: "8.0.x"
       - name: Test and build the Blazor UI
-        run: dotnet test ui/PixelPipe.Web.Tests/PixelPipe.Web.Tests.csproj -c Release --nologo
+        run: |
+          node --test ui/player-menu.test.mjs
+          dotnet test ui/PixelPipe.Web.Tests/PixelPipe.Web.Tests.csproj -c Release --nologo

@@ -4,7 +4,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>PixelPipe.Web</RootNamespace>
-    <Version>0.3.2</Version>
+    <Version>0.3.3</Version>
   </PropertyGroup>
   <!-- The Windows publish is a GUI app and includes the password dialog.
        Docker and the tests stay on net8.0 and keep a console host. -->

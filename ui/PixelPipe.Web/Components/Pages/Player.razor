@@ -16,7 +16,7 @@ else
         <div>
             <div class="stage" id="pp-stage" tabindex="0">
                 <video id="pp-video" autoplay playsinline></video>
-                <div id="pp-hud" class="hud">Click Play. Arrows move, Z is B, X is A, Enter is Start, Shift is Select.</div>
+                <div id="pp-hud" class="hud">Click Play. Arrows move, Z is B, X is A, Enter is Start, Shift is Select. Menu, Esc, or Select+Start opens the menu.</div>
             </div>
         </div>
         <aside class="player-side">
@@ -34,14 +34,15 @@ else
                 }
             </MudButtonGroup>
             <MudText Typo="Typo.caption">
-                Battery saves are written while you play and when you leave. Leaving also writes the auto slot, which Continue loads.
-                Numbered slots are only yours.
+                The Menu button, Esc, or holding Select and Start opens the menu. Quit to library writes the auto slot, which Continue loads, and stops the game.
+                Numbered slots are only yours. Closing this page does the same save.
             </MudText>
             <MudButton Href="@_game.DetailHref" Variant="Variant.Text" Class="mt-2">Details</MudButton>
         </aside>
     </div>
 }
 
+@implements IAsyncDisposable
 @code {
     [Parameter] public string Id { get; set; } = "";
     [SupplyParameterFromQuery(Name = "slot")] public string? SlotQuery { get; set; }
@@ -95,4 +96,20 @@ else
     private async Task Save() => await JS.InvokeVoidAsync("pixelpipePlayer.saveState", _slot);
 
     private async Task Load() => await JS.InvokeVoidAsync("pixelpipePlayer.loadState", _slot);
+
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("pixelpipePlayer.stop");
+        }
+        catch (JSDisconnectedException)
+        {
+            // The browser already left. The engine saves when the connection drops.
+        }
+        catch (InvalidOperationException)
+        {
+            // Prerender has no JavaScript runtime yet.
+        }
+    }
 }
