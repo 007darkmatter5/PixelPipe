@@ -107,7 +107,8 @@ public sealed record RemoteRelease(
     string? HtmlUrl,
     long? ExeAssetId,
     long? ShaAssetId,
-    string? ExeName = null);
+    string? ExeName = null,
+    string? ExeUrl = null);
 
 public static class SetupAssets
 {
@@ -126,7 +127,7 @@ public static class SetupAssets
         checksumName.Equals(installerName + ".sha256", StringComparison.OrdinalIgnoreCase)
         || checksumName.Equals("PixelPipe-Setup.exe.sha256", StringComparison.OrdinalIgnoreCase);
 
-    public static (string Name, long Id)? PreferInstaller(IReadOnlyList<(string Name, long Id)> installers)
+    public static (string Name, long Id, string? Url)? PreferInstaller(IReadOnlyList<(string Name, long Id, string? Url)> installers)
     {
         var versioned = installers
             .Where(item => item.Name.StartsWith("PixelPipe-Setup-", StringComparison.OrdinalIgnoreCase))

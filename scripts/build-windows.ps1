@@ -62,6 +62,10 @@ try {
     dotnet publish ui/PixelPipe.Tray/PixelPipe.Tray.csproj -c Release -r win-x64 --self-contained true -p:PublishReadyToRun=false -o $trayOut
     if ($LASTEXITCODE -ne 0) { throw "tray publish failed ($LASTEXITCODE)" }
     Copy-Item (Join-Path $trayOut 'PixelPipe.Tray.exe') $stage
+    $updaterOut = Join-Path $Root 'dist\updater-publish'
+    dotnet publish ui/PixelPipe.Updater/PixelPipe.Updater.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:PublishReadyToRun=false -o $updaterOut
+    if ($LASTEXITCODE -ne 0) { throw "updater publish failed ($LASTEXITCODE)" }
+    Copy-Item (Join-Path $updaterOut 'PixelPipe.Updater.exe') $stage
     Copy-Item (Join-Path $Root 'engine\target\release\pixelpipe-engine.exe') $stage
     Copy-Item (Join-Path $ffmpeg 'bin\*.dll') $stage
     $coresDest = Join-Path $stage 'cores'

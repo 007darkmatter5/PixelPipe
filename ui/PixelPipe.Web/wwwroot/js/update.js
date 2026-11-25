@@ -14,6 +14,8 @@ window.pixelpipeApplyUpdate = async function (confirm) {
   bar.hidden = true;
   title.textContent = "Checking for the update…";
   detail.textContent = "";
+  const hideReconnect = window.setInterval(hideBlazorReconnect, 400);
+  hideBlazorReconnect();
 
   const poll = window.setInterval(async () => {
     try {
@@ -24,8 +26,8 @@ window.pixelpipeApplyUpdate = async function (confirm) {
       const snapshot = await response.json();
       paint(snapshot, title, detail, bar);
     } catch {
-      title.textContent = "Reconnecting…";
-      detail.textContent = "PixelPipe is restarting.";
+      title.textContent = "Installing…";
+      detail.textContent = "PixelPipe is restarting. This can take a few minutes.";
       bar.hidden = true;
     }
   }, 700);
@@ -38,6 +40,7 @@ window.pixelpipeApplyUpdate = async function (confirm) {
     });
     if (!response.ok) {
       window.clearInterval(poll);
+      window.clearInterval(hideReconnect);
       let reason = await response.text();
       try {
         const body = JSON.parse(reason);
@@ -51,32 +54,61 @@ window.pixelpipeApplyUpdate = async function (confirm) {
     }
   } catch (err) {
     window.clearInterval(poll);
+    window.clearInterval(hideReconnect);
     showError(title, detail, error, String(err));
     panel.dataset.running = "0";
     return;
   }
 
-  title.textContent = "Reconnecting…";
-  detail.textContent = "Installing. Windows will ask for permission if it needs it. This page will reload when PixelPipe is back.";
+  title.textContent = "Installing…";
+  detail.textContent = "The updater service is installing PixelPipe. No permission prompt is required. This page will reload when the new version answers.";
   bar.hidden = true;
   await window.pixelpipeWaitForRestart();
   window.clearInterval(poll);
+  window.clearInterval(hideReconnect);
 };
 
+function hideBlazorReconnect() {
+  document.querySelectorAll("#components-reconnect-modal, .components-reconnect-modal").forEach((el) => {
+    el.style.display = "none";
+  });
+}
+
 window.pixelpipeWaitForRestart = async function () {
-  for (let attempt = 0; attempt < 90; attempt++) {
+  const started = Date.now();
+  let initial = null;
+  let sawOutage = false;
+  while (Date.now() - started < 8 * 60 * 1000) {
     await new Promise((resolve) => setTimeout(resolve, 2000));
+    hideBlazorReconnect();
+    const title = document.getElementById("pp-update-title");
+    const detail = document.getElementById("pp-update-detail");
     try {
-      const response = await fetch("/api/app/update", { cache: "no-store" });
-      if (response.ok) {
-        location.reload();
+      const response = await fetch("/health", { cache: "no-store" });
+      if (!response.ok) {
+        sawOutage = true;
+        continue;
+      }
+      const body = await response.json();
+      if (initial === null) initial = body.version || "";
+      if (body.phase === "failed") {
+        showError(title, detail, document.getElementById("pp-update-error"), body.error || body.message || "The update failed.");
         return;
       }
+      const restarted = sawOutage || (body.version && initial && body.version !== initial);
+      if (!restarted) {
+        if (title) title.textContent = "Installing…";
+        if (detail) detail.textContent = body.message || "The updater service is installing PixelPipe.";
+        continue;
+      }
+      if (title) title.textContent = body.version ? `Updated to v${body.version}` : "PixelPipe is back";
+      if (detail) detail.textContent = "Reloading…";
+      location.reload();
+      return;
     } catch {
-      const title = document.getElementById("pp-update-title");
-      const detail = document.getElementById("pp-update-detail");
-      if (title) title.textContent = "Reconnecting…";
-      if (detail) detail.textContent = "PixelPipe is restarting.";
+      sawOutage = true;
+      if (title) title.textContent = "Installing…";
+      if (detail) detail.textContent = "PixelPipe is restarting. This can take a few minutes. You do not need to be at the PC.";
     }
   }
   showError(

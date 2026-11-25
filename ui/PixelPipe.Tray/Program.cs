@@ -446,13 +446,40 @@ internal sealed class TrayApplication : ApplicationContext
 
     private void StartChildren()
     {
+        try
+        {
+            var stop = Path.Combine(_dataDir, "manual-stop");
+            if (File.Exists(stop))
+            {
+                File.Delete(stop);
+            }
+        }
+        catch
+        {
+            // The updater may already be starting the site.
+        }
+
         var generation = _generation;
-        _engine = StartHidden(Path.Combine(_installDir, "pixelpipe-engine.exe"), "--no-ui", null);
-        Watch(_engine, generation, () =>
+        if (PortOpen(9090))
+        {
+            AppendLog("engine is already listening on 9090");
+        }
+        else
         {
             _engine = StartHidden(Path.Combine(_installDir, "pixelpipe-engine.exe"), "--no-ui", null);
-            return _engine;
-        });
+            Watch(_engine, generation, () =>
+            {
+                _engine = StartHidden(Path.Combine(_installDir, "pixelpipe-engine.exe"), "--no-ui", null);
+                return _engine;
+            });
+        }
+
+        if (PortOpen(8080))
+        {
+            AppendLog("web app is already listening on 8080");
+            return;
+        }
+
         var env = new Dictionary<string, string>
         {
             ["PixelPipe__EngineUrl"] = "http://127.0.0.1:9090",
@@ -593,9 +620,37 @@ internal sealed class TrayApplication : ApplicationContext
         StartChildren();
     }
 
+    private static bool PortOpen(int port)
+    {
+        try
+        {
+            using var tcp = new System.Net.Sockets.TcpClient();
+            var task = tcp.ConnectAsync("127.0.0.1", port);
+            if (!task.Wait(400))
+            {
+                return false;
+            }
+
+            return task.Status == TaskStatus.RanToCompletion && tcp.Connected;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     private void Quit()
     {
         _quitting = true;
+        try
+        {
+            File.WriteAllText(Path.Combine(_dataDir, "manual-stop"), "quit");
+        }
+        catch
+        {
+            // The updater may restart the site after this quit.
+        }
+
         StopChildren();
         _icon.Visible = false;
         _icon.Dispose();
