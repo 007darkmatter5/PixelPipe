@@ -60,67 +60,36 @@
   window.addEventListener("touchstart", wakeToggle, { passive: true });
   window.addEventListener("pagehide", beaconStop);
   requestAnimationFrame(tick);
-  whenStage(ensureMenu);
+  document.addEventListener("click", onMenuClick);
+  wakeToggle();
 
   function hud(text) {
     const el = document.getElementById("pp-hud");
     if (el && text) el.textContent = text;
   }
 
-  function whenStage(fn) {
-    const now = document.getElementById("pp-stage");
-    if (now) {
-      fn(now);
+  function onMenuClick(event) {
+    const el = event.target instanceof Element ? event.target : null;
+    if (!el || !document.getElementById("pp-stage")) return;
+    if (el.closest("#pp-menu-toggle")) {
+      event.preventDefault();
+      toggleMenu();
       return;
     }
-    const obs = new MutationObserver(() => {
-      const stage = document.getElementById("pp-stage");
-      if (!stage) return;
-      obs.disconnect();
-      fn(stage);
-    });
-    if (document.body) obs.observe(document.body, { childList: true, subtree: true });
+    const button = el.closest("#pp-menu button");
+    if (!button) return;
+    event.preventDefault();
+    if (button.getAttribute("data-pp-action") === "close") {
+      closeMenu();
+      return;
+    }
+    const buttons = currentButtons();
+    const index = buttons.indexOf(button);
+    if (index >= 0) state.index = index;
+    activate();
   }
 
   function ensureMenu() {
-    const stage = document.getElementById("pp-stage");
-    if (!stage || document.getElementById("pp-menu-toggle")) return;
-    const toggle = document.createElement("button");
-    toggle.id = "pp-menu-toggle";
-    toggle.type = "button";
-    toggle.className = "pp-menu-toggle idle";
-    toggle.textContent = "Menu";
-    toggle.setAttribute("aria-label", "Game menu");
-    toggle.addEventListener("click", (event) => {
-      event.stopPropagation();
-      toggleMenu();
-    });
-    const overlay = document.createElement("div");
-    overlay.id = "pp-menu";
-    overlay.className = "pp-menu";
-    overlay.hidden = true;
-    const backdrop = document.createElement("button");
-    backdrop.type = "button";
-    backdrop.className = "pp-menu-backdrop";
-    backdrop.setAttribute("aria-label", "Close menu");
-    backdrop.addEventListener("click", closeMenu);
-    const panel = document.createElement("div");
-    panel.id = "pp-menu-panel";
-    panel.className = "pp-menu-panel";
-    panel.setAttribute("role", "dialog");
-    panel.setAttribute("aria-modal", "true");
-    panel.setAttribute("aria-label", "Game menu");
-    panel.addEventListener("click", (event) => event.stopPropagation());
-    overlay.appendChild(backdrop);
-    overlay.appendChild(panel);
-    const badge = document.createElement("div");
-    badge.id = "pp-paused";
-    badge.className = "pp-paused";
-    badge.hidden = true;
-    badge.textContent = "Paused";
-    stage.appendChild(toggle);
-    stage.appendChild(overlay);
-    stage.appendChild(badge);
     wakeToggle();
   }
 
@@ -134,39 +103,43 @@
     }, menuApi()?.IDLE_MS || 2500);
   }
 
-  function items() {
-    return menuApi().itemsFor(state.menu === "closed" ? "main" : state.menu, state.paused);
+  function currentButtons() {
+    const id = state.menu === "save" || state.menu === "load"
+      ? "pp-menu-slots"
+      : state.menu === "reset"
+        ? "pp-menu-reset"
+        : "pp-menu-main";
+    const page = document.getElementById(id);
+    return page ? [...page.querySelectorAll("button")] : [];
   }
 
   function renderMenu() {
     const overlay = document.getElementById("pp-menu");
-    const panel = document.getElementById("pp-menu-panel");
     const badge = document.getElementById("pp-paused");
-    if (!overlay || !panel) return;
+    if (!overlay) return;
     if (badge) badge.hidden = !state.paused;
-    overlay.hidden = state.menu === "closed";
-    panel.replaceChildren();
-    if (state.menu === "closed") return;
-    wakeToggle();
-    const title = document.createElement("p");
-    title.className = "pp-menu-title";
-    title.textContent =
-      state.menu === "save" ? "Save state" :
-      state.menu === "load" ? "Load state" :
-      state.menu === "reset" ? "Reset this game?" :
-      state.paused ? "Paused" : "Menu";
-    panel.appendChild(title);
-    items().forEach((item, index) => {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.textContent = item.label;
+    overlay.classList.toggle("pp-open", state.menu !== "closed");
+    const main = document.getElementById("pp-menu-main");
+    const slots = document.getElementById("pp-menu-slots");
+    const reset = document.getElementById("pp-menu-reset");
+    if (main) main.hidden = state.menu !== "main" && state.menu !== "closed";
+    if (slots) slots.hidden = state.menu !== "save" && state.menu !== "load";
+    if (reset) reset.hidden = state.menu !== "reset";
+    const title = document.getElementById("pp-menu-title");
+    if (title) {
+      title.textContent =
+        state.menu === "save" ? "Save state" :
+        state.menu === "load" ? "Load state" :
+        state.menu === "reset" ? "Reset this game?" :
+        state.paused ? "Paused" : "Menu";
+    }
+    const pause = document.querySelector("#pp-menu [data-pp-action='pause']");
+    if (pause) pause.textContent = state.paused ? "Paused" : "Pause";
+    currentButtons().forEach((button, index) => {
       if (index === state.index) button.setAttribute("aria-current", "true");
-      button.addEventListener("click", () => {
-        state.index = index;
-        activate();
-      });
-      panel.appendChild(button);
+      else button.removeAttribute("aria-current");
     });
+    if (state.menu !== "closed") wakeToggle();
   }
 
   function openMenu() {
@@ -191,55 +164,61 @@
   }
 
   function move(delta) {
-    const count = items().length;
+    const count = currentButtons().length || 1;
     state.index = menuApi().moveIndex(state.index, delta, count);
     renderMenu();
   }
 
   async function activate() {
-    const item = items()[state.index];
-    if (!item) return;
-    if (state.menu === "save" || state.menu === "load") {
-      if (item.id === "back") {
-        const returning = state.menu;
-        state.menu = "main";
-        state.index = returning === "save" ? 2 : 3;
-        renderMenu();
-        return;
-      }
-      if (state.menu === "save") await saveState(item.id);
-      else await loadState(item.id);
+    const button = currentButtons()[state.index];
+    if (!button) return;
+    const action = button.getAttribute("data-pp-action");
+    const slot = button.getAttribute("data-pp-slot");
+    if (slot) {
+      if (state.menu === "save") await saveState(slot);
+      else await loadState(slot);
       closeMenu();
       return;
     }
-    if (state.menu === "reset") {
-      if (item.id === "yes") await resetGame();
+    if (action === "close") {
+      closeMenu();
+      return;
+    }
+    if (action === "back" || action === "reset-no") {
+      const returning = state.menu;
+      state.menu = "main";
+      state.index = returning === "save" ? 2 : returning === "load" ? 3 : 4;
+      renderMenu();
+      return;
+    }
+    if (action === "reset-yes") {
+      await resetGame();
       state.menu = "main";
       state.index = 4;
       renderMenu();
       return;
     }
-    if (item.id === "resume") {
+    if (action === "resume") {
       await setPaused(false);
       closeMenu();
       return;
     }
-    if (item.id === "pause") {
+    if (action === "pause") {
       await setPaused(!state.paused);
       renderMenu();
       return;
     }
-    if (item.id === "save" || item.id === "load" || item.id === "reset") {
-      state.menu = item.id;
-      state.index = item.id === "reset" ? 1 : 0;
+    if (action === "save" || action === "load" || action === "reset") {
+      state.menu = action;
+      state.index = action === "reset" ? 1 : 0;
       renderMenu();
       return;
     }
-    if (item.id === "fullscreen") {
+    if (action === "fullscreen") {
       toggleFullscreen();
       return;
     }
-    if (item.id === "quit") await quitToLibrary();
+    if (action === "quit") await quitToLibrary();
   }
 
   function toggleFullscreen() {
@@ -591,5 +570,10 @@
     location.assign("/");
   }
 
-  window.pixelpipePlayer = { start, saveState, loadState, stop, openMenu };
+  async function togglePause() {
+    await setPaused(!state.paused);
+    renderMenu();
+  }
+
+  window.pixelpipePlayer = { start, saveState, loadState, stop, openMenu, quit: quitToLibrary, togglePause };
 })();

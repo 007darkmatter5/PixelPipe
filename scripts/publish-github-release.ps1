@@ -33,6 +33,18 @@ NVENC on a real NVIDIA GPU, and this installer on a real Windows 11 desktop, sti
 SHA256 is in PixelPipe-Setup.exe.sha256.
 "@
 }
+elseif ($tag -eq 'v0.3.4-preview') {
+    $title = 'PixelPipe 0.3.4 preview (Windows)'
+    $notes = @"
+The Menu button is part of the player page, drawn on top of the video. It stays after the page refreshes. Esc, the gamepad Guide button, and holding Select and Start still open it. The side panel also has Pause and Quit to library.
+
+Check for updates now says what it found. The web page shows a spinner, then either You're up to date, Update vY available, or the error. The tray shows the same result in a balloon. The check also looks up release tags, because GitHub's public release list left out v0.3.3-preview.
+
+The download is PixelPipe-Setup-0.3.4.exe. Installing it over an existing copy keeps config.json, accounts, and saves.
+
+SHA256 is in PixelPipe-Setup-0.3.4.exe.sha256.
+"@
+}
 elseif ($tag -eq 'v0.3.3-preview') {
     $title = 'PixelPipe 0.3.3 preview (Windows)'
     $notes = @"

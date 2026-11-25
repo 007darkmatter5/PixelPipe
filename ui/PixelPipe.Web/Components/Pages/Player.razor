@@ -16,6 +16,35 @@ else
         <div>
             <div class="stage" id="pp-stage" tabindex="0">
                 <video id="pp-video" autoplay playsinline></video>
+                <button type="button" id="pp-menu-toggle" class="pp-menu-toggle" aria-label="Game menu">Menu</button>
+                <div id="pp-menu" class="pp-menu">
+                    <button type="button" class="pp-menu-backdrop" data-pp-action="close" aria-label="Close menu"></button>
+                    <div id="pp-menu-panel" class="pp-menu-panel" role="dialog" aria-modal="true" aria-label="Game menu">
+                        <p id="pp-menu-title" class="pp-menu-title">Menu</p>
+                        <div id="pp-menu-main" class="pp-menu-page">
+                            <button type="button" data-pp-action="resume">Resume</button>
+                            <button type="button" data-pp-action="pause">Pause</button>
+                            <button type="button" data-pp-action="save">Save state</button>
+                            <button type="button" data-pp-action="load">Load state</button>
+                            <button type="button" data-pp-action="reset">Reset game</button>
+                            <button type="button" data-pp-action="fullscreen">Fullscreen</button>
+                            <button type="button" data-pp-action="quit">Quit to library</button>
+                        </div>
+                        <div id="pp-menu-slots" class="pp-menu-page" hidden>
+                            <button type="button" data-pp-slot="1">Slot 1</button>
+                            <button type="button" data-pp-slot="2">Slot 2</button>
+                            <button type="button" data-pp-slot="3">Slot 3</button>
+                            <button type="button" data-pp-slot="4">Slot 4</button>
+                            <button type="button" data-pp-slot="5">Slot 5</button>
+                            <button type="button" data-pp-action="back">Back</button>
+                        </div>
+                        <div id="pp-menu-reset" class="pp-menu-page" hidden>
+                            <button type="button" data-pp-action="reset-yes">Reset game</button>
+                            <button type="button" data-pp-action="reset-no">Don't reset</button>
+                        </div>
+                    </div>
+                </div>
+                <div id="pp-paused" class="pp-paused" hidden>Paused</div>
                 <div id="pp-hud" class="hud">Click Play. Arrows move, Z is B, X is A, Enter is Start, Shift is Select. Menu, Esc, or Select+Start opens the menu.</div>
             </div>
         </div>
@@ -24,6 +53,8 @@ else
             <MudText Typo="Typo.body2" Class="mud-text-secondary">@_game.System · @_game.Crc32</MudText>
             <div class="row">
                 <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="Start">Play</MudButton>
+                <MudButton Variant="Variant.Outlined" OnClick="PauseGame">Pause</MudButton>
+                <MudButton Variant="Variant.Outlined" Color="Color.Error" OnClick="QuitGame">Quit to library</MudButton>
                 <MudButton Variant="Variant.Outlined" OnClick="Save">Save slot @_slot</MudButton>
                 <MudButton Variant="Variant.Outlined" OnClick="Load">Load slot @_slot</MudButton>
             </div>
@@ -96,6 +127,30 @@ else
     private async Task Save() => await JS.InvokeVoidAsync("pixelpipePlayer.saveState", _slot);
 
     private async Task Load() => await JS.InvokeVoidAsync("pixelpipePlayer.loadState", _slot);
+
+    private async Task PauseGame()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("pixelpipePlayer.togglePause");
+        }
+        catch (Exception)
+        {
+            // The overlay script reports the pause. This click still should not crash the page.
+        }
+    }
+
+    private async Task QuitGame()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("pixelpipePlayer.quit");
+        }
+        catch (Exception)
+        {
+            Nav.NavigateTo("/");
+        }
+    }
 
     public async ValueTask DisposeAsync()
     {
