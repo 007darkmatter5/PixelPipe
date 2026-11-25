@@ -23,6 +23,29 @@ sealed class UpdaterWorker : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        try
+        {
+            await RunAsync(stoppingToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            try
+            {
+                var dir = UpdaterLog.DataDirectory();
+                Directory.CreateDirectory(dir);
+                File.AppendAllText(Path.Combine(dir, "updater-crash.txt"), ex + Environment.NewLine);
+            }
+            catch
+            {
+                // The service manager records the stop as well.
+            }
+
+            throw;
+        }
+    }
+
+    private async Task RunAsync(CancellationToken stoppingToken)
+    {
         Directory.CreateDirectory(UpdaterLog.DataDirectory());
         var token = EnsureToken();
         UpdaterLog.Write("PixelPipe Updater service started");
@@ -254,23 +277,31 @@ sealed class UpdaterWorker : BackgroundService
 
     private static async Task EnsureAppsAsync(CancellationToken cancellationToken)
     {
-        var dir = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        if (!PortOpen(9090))
+        try
         {
-            Start(Path.Combine(dir, "pixelpipe-engine.exe"), "--no-ui", null);
-            UpdaterLog.Write("started the engine");
-        }
-
-        if (!PortOpen(8080))
-        {
-            Start(Path.Combine(dir, "PixelPipe.Web.exe"), "", new Dictionary<string, string>
+            var dir = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            UpdaterLog.Write("checking whether the site is up from " + dir);
+            if (!PortOpen(9090))
             {
-                ["ASPNETCORE_URLS"] = "http://0.0.0.0:8080",
-                ["PixelPipe__EngineUrl"] = "http://127.0.0.1:9090",
-                ["ASPNETCORE_ENVIRONMENT"] = "Production",
-            });
-            UpdaterLog.Write("started the web app");
-            UpdaterLog.WriteStatus("restarting", "Starting PixelPipe.", null, null);
+                Start(Path.Combine(dir, "pixelpipe-engine.exe"), "--no-ui", null);
+                UpdaterLog.Write("started the engine");
+            }
+
+            if (!PortOpen(8080))
+            {
+                Start(Path.Combine(dir, "PixelPipe.Web.exe"), "", new Dictionary<string, string>
+                {
+                    ["ASPNETCORE_URLS"] = "http://0.0.0.0:8080",
+                    ["PixelPipe__EngineUrl"] = "http://127.0.0.1:9090",
+                    ["ASPNETCORE_ENVIRONMENT"] = "Production",
+                });
+                UpdaterLog.Write("started the web app");
+                UpdaterLog.WriteStatus("restarting", "Starting PixelPipe.", null, null);
+            }
+        }
+        catch (Exception ex)
+        {
+            UpdaterLog.Write("could not start PixelPipe: " + ex);
         }
 
         await Task.Delay(200, cancellationToken);

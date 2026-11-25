@@ -151,6 +151,8 @@ function Assert-UnattendedUpdate {
     $service = Get-Service -Name 'PixelPipeUpdater' -ErrorAction SilentlyContinue
     if (-not $service) { throw 'PixelPipe Updater service was not installed' }
     if ($service.Status -ne 'Running') { Start-Service PixelPipeUpdater }
+    Restart-Service PixelPipeUpdater
+    Start-Sleep -Seconds 3
     $account = (Get-CimInstance Win32_Service -Filter "Name='PixelPipeUpdater'").StartName
     if ($account -notmatch 'LocalSystem|NT AUTHORITY\\SYSTEM') { throw "PixelPipe Updater is running as $account" }
     Write-Host "PixelPipe Updater is running as $account"
@@ -174,7 +176,7 @@ function Assert-UnattendedUpdate {
         Start-Sleep -Seconds 3
     }
     if (-not $back) {
-        foreach ($log in @('C:\ProgramData\PixelPipe\updater.log', 'C:\ProgramData\PixelPipe\pixelpipe.log')) {
+        foreach ($log in @('C:\ProgramData\PixelPipe\updater-crash.txt', 'C:\ProgramData\PixelPipe\updater.log', 'C:\ProgramData\PixelPipe\pixelpipe.log')) {
             if (Test-Path $log) {
                 Write-Host "--- $log ---"
                 Get-Content $log -Tail 40
