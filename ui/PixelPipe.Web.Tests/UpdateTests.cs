@@ -65,7 +65,13 @@ public sealed class UpdateTests
     public async Task A_032_version_finds_033_or_newer_on_the_public_release_list()
     {
         using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
-        var releases = await GitHubReleases.LoadAsync(client, token: null, "007darkmatter5/PixelPipe", CancellationToken.None);
+        var token = Environment.GetEnvironmentVariable("GITHUB_TOKEN");
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            token = Environment.GetEnvironmentVariable("GH_TOKEN");
+        }
+
+        var releases = await GitHubReleases.LoadAsync(client, token, "007darkmatter5/PixelPipe", CancellationToken.None);
         var found = ReleaseSelection.NewerThan(releases, new AppVersion(0, 3, 2, null), includePreviews: true);
         Assert.NotNull(found);
         Assert.True(found.Version.CompareTo(new AppVersion(0, 3, 3, "preview")) >= 0, found.Tag);

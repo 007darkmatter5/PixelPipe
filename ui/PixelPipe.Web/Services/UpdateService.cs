@@ -610,6 +610,11 @@ public static class GitHubReleases
         }
 
         using var response = await client.SendAsync(request, cancellationToken);
+        if (response.StatusCode == System.Net.HttpStatusCode.Forbidden)
+        {
+            UpdateLog.Write("GitHub rate limit on " + url);
+        }
+
         if (response.StatusCode is System.Net.HttpStatusCode.NotFound or System.Net.HttpStatusCode.Unauthorized)
         {
             throw new UpdateAccessException(UpdateService.PrivateRepoMessage);
