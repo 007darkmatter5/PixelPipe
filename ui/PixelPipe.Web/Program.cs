@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net.Http.Headers;
 using System.Security.Claims;
 using System.Threading.RateLimiting;
@@ -11,10 +12,17 @@ using PixelPipe.Web.Services;
 using Yarp.ReverseProxy.Forwarder;
 using Yarp.ReverseProxy.Transforms;
 
+if (args is ["--reset-password-file", var resetFile])
+{
+    Environment.Exit(ResetPasswordFromFile(resetFile));
+}
+
 if (args is ["--reset-password", var resetUser])
 {
     Environment.Exit(ResetPasswordCli(resetUser));
 }
+
+AppPaths.EnsureDataDirectory();
 
 var builder = WebApplication.CreateBuilder(args);
 AddFileLog(builder.Logging);
@@ -387,45 +395,153 @@ static async ValueTask<object?> LocalOrSignedIn(EndpointFilterInvocationContext 
 
 static int ResetPasswordCli(string username)
 {
-    string password;
-    string confirm;
-    if (Console.IsInputRedirected)
+    try
     {
-        password = Console.In.ReadLine() ?? "";
-        confirm = Console.In.ReadLine() ?? "";
-    }
-    else
-    {
-        if (OperatingSystem.IsWindows())
+        string password;
+        string confirm;
+        if (Console.IsInputRedirected)
         {
-            ResetConsole.Attach();
+            password = Console.In.ReadLine() ?? "";
+            confirm = Console.In.ReadLine() ?? "";
+        }
+        else
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                ResetConsole.Attach();
+            }
+
+            Console.Write("New password: ");
+            password = Console.ReadLine() ?? "";
+            Console.Write("Confirm password: ");
+            confirm = Console.ReadLine() ?? "";
         }
 
-        Console.Write("New password: ");
-        password = Console.ReadLine() ?? "";
-        Console.Write("Confirm password: ");
-        confirm = Console.ReadLine() ?? "";
-    }
+        if (OperatingSystem.IsWindows() && !IsProcessAdmin())
+        {
+            var file = Path.Combine(Path.GetTempPath(), "pixelpipe-reset-" + Guid.NewGuid().ToString("N"));
+            File.WriteAllText(file, username + "\n" + password + "\n" + confirm + "\n");
+            Console.WriteLine("Windows will ask for permission to update the password.");
+            RelaunchElevated(file);
+            return 0;
+        }
 
+        var outcome = ApplyPasswordReset(username, password, confirm);
+        if (outcome.Code == 0)
+        {
+            Console.WriteLine(outcome.Message);
+        }
+        else
+        {
+            Console.Error.WriteLine(outcome.Message);
+        }
+
+        return outcome.Code;
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine(FriendlyResetError(ex));
+        return 1;
+    }
+}
+
+static int ResetPasswordFromFile(string file)
+{
+    var result = file + ".result";
+    try
+    {
+        var lines = File.ReadAllLines(file);
+        var username = lines.Length > 0 ? lines[0] : "";
+        var password = lines.Length > 1 ? lines[1] : "";
+        var confirm = lines.Length > 2 ? lines[2] : "";
+        var outcome = ApplyPasswordReset(username, password, confirm);
+        File.WriteAllText(result, outcome.Code + "\n" + outcome.Message);
+        if (outcome.Code == 0)
+        {
+            Console.WriteLine(outcome.Message);
+        }
+        else
+        {
+            Console.Error.WriteLine(outcome.Message);
+        }
+
+        return outcome.Code;
+    }
+    catch (Exception ex)
+    {
+        var message = FriendlyResetError(ex);
+        File.WriteAllText(result, "1\n" + message);
+        Console.Error.WriteLine(message);
+        return 1;
+    }
+    finally
+    {
+        try
+        {
+            if (File.Exists(file))
+            {
+                File.Delete(file);
+            }
+        }
+        catch
+        {
+            // The request file is in the user temp directory.
+        }
+    }
+}
+
+static (int Code, string Message) ApplyPasswordReset(string username, string password, string confirm)
+{
     var problem = PasswordRules.Check(password, confirm);
     if (problem is not null)
     {
-        Console.Error.WriteLine(problem);
-        return 1;
+        return (1, problem);
     }
 
+    AppPaths.EnsureDataDirectory();
     var accounts = new AccountStore();
     var user = accounts.FindByName(username);
     if (user is null)
     {
-        Console.Error.WriteLine($"No account named {username}.");
-        return 1;
+        return (1, $"No account named {username}.");
     }
 
     accounts.SetPassword(user.Id, password);
     accounts.ClearLockout(user.Id);
-    Console.WriteLine($"Password updated for {user.Username}.");
-    return 0;
+    return (0, $"Password updated for {user.Username}.");
+}
+
+static string FriendlyResetError(Exception ex)
+{
+    if (ex is Microsoft.Data.Sqlite.SqliteException sqlite && sqlite.SqliteErrorCode == 8)
+    {
+        return "The accounts database is read-only. Reinstall PixelPipe so Users can modify %ProgramData%\\PixelPipe, then try the reset again.";
+    }
+
+    return "Could not reset the password: " + ex.Message;
+}
+
+static bool IsProcessAdmin()
+{
+    if (!OperatingSystem.IsWindows())
+    {
+        return true;
+    }
+
+    using var identity = System.Security.Principal.WindowsIdentity.GetCurrent();
+    return new System.Security.Principal.WindowsPrincipal(identity)
+        .IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
+}
+
+static void RelaunchElevated(string requestFile)
+{
+    Process.Start(new ProcessStartInfo
+    {
+        FileName = Environment.ProcessPath ?? "",
+        Arguments = "--reset-password-file \"" + requestFile + "\"",
+        UseShellExecute = true,
+        Verb = "runas",
+    });
 }
 
 static async Task SignInAsync(HttpContext http, AccountUser user, bool remember)

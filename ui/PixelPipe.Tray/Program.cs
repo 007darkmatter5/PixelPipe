@@ -143,7 +143,24 @@ internal sealed class TrayApplication : ApplicationContext
         string? lastPhase = null;
         while (!_quitting)
         {
-            await Task.Delay(TimeSpan.FromSeconds(2));
+            await Task.Delay(TimeSpan.FromSeconds(1));
+            var quit = Path.Combine(_dataDir, "quit.request");
+            if (File.Exists(quit))
+            {
+                try
+                {
+                    File.Delete(quit);
+                }
+                catch
+                {
+                    // The installer removes the file if this process is killed first.
+                }
+
+                _ui.BeginInvoke(new Action(Quit));
+                return;
+            }
+
+            await Task.Delay(TimeSpan.FromSeconds(1));
             try
             {
                 using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
@@ -306,43 +323,56 @@ internal sealed class TrayApplication : ApplicationContext
             return;
         }
 
+        var request = Path.Combine(Path.GetTempPath(), "pixelpipe-reset-" + Guid.NewGuid().ToString("N"));
+        var result = request + ".result";
         try
         {
-            var start = new ProcessStartInfo
+            File.WriteAllText(request, dialog.Username + "\n" + dialog.Password + "\n" + dialog.Password + "\n");
+            MessageBox.Show("Windows will ask for permission to change the password.", "PixelPipe");
+            Process.Start(new ProcessStartInfo
             {
                 FileName = web,
-                Arguments = "--reset-password \"" + dialog.Username.Replace("\"", "") + "\"",
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardInput = true,
-                RedirectStandardError = true,
-                RedirectStandardOutput = true,
-            };
-            using var process = Process.Start(start);
-            if (process is null)
+                Arguments = "--reset-password-file \"" + request + "\"",
+                UseShellExecute = true,
+                Verb = "runas",
+            });
+            var deadline = DateTime.UtcNow.AddSeconds(60);
+            while (!File.Exists(result) && DateTime.UtcNow < deadline)
             {
+                Thread.Sleep(300);
+            }
+
+            if (!File.Exists(result))
+            {
+                MessageBox.Show("The password reset did not finish. If you cancelled the permission prompt, nothing was changed.", "PixelPipe");
                 return;
             }
 
-            process.StandardInput.WriteLine(dialog.Password);
-            process.StandardInput.WriteLine(dialog.Password);
-            process.StandardInput.Close();
-            if (!process.WaitForExit(15000))
-            {
-                process.Kill(entireProcessTree: true);
-                MessageBox.Show("The password reset did not finish.", "PixelPipe");
-                return;
-            }
-
-            var error = process.StandardError.ReadToEnd();
-            MessageBox.Show(
-                process.ExitCode == 0 ? "Password updated. Sign in with the new password." : (string.IsNullOrWhiteSpace(error) ? "Password reset failed." : error.Trim()),
-                "PixelPipe");
-            UpdateLog(process.ExitCode == 0 ? $"reset password for {dialog.Username}" : error.Trim());
+            var text = File.ReadAllText(result).Trim();
+            var ok = text.StartsWith("0", StringComparison.Ordinal);
+            var message = text.Length > 2 ? text[2..].Trim() : (ok ? "Password updated. Sign in with the new password." : "The password was not changed.");
+            MessageBox.Show(message, "PixelPipe");
+            UpdateLog(ok ? $"reset password for {dialog.Username}" : message);
+        }
+        catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 1223)
+        {
+            MessageBox.Show("Windows permission was cancelled. The password was not changed.", "PixelPipe");
         }
         catch (Exception ex)
         {
-            MessageBox.Show(ex.Message, "PixelPipe");
+            MessageBox.Show("Could not reset the password: " + ex.Message, "PixelPipe");
+        }
+        finally
+        {
+            try
+            {
+                if (File.Exists(request)) File.Delete(request);
+                if (File.Exists(result)) File.Delete(result);
+            }
+            catch
+            {
+                // Temp files are removed on the next reboot if they stay behind.
+            }
         }
     }
 

@@ -34,8 +34,14 @@ public sealed class AccountStore
 
     public AccountStore(string path)
     {
+        if (AppPaths.IsUnderProgramFiles(path))
+        {
+            throw new InvalidOperationException("The accounts database cannot be stored in Program Files.");
+        }
+
         _path = path;
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        AppPaths.TryGrantUsersModify(Path.GetDirectoryName(path)!);
         lock (_gate)
         {
             using var db = Open();
@@ -308,10 +314,35 @@ public sealed class AccountStore
         }
     }
 
+    public string JournalMode()
+    {
+        using var db = Open();
+        using var cmd = db.CreateCommand();
+        cmd.CommandText = "PRAGMA journal_mode";
+        return Convert.ToString(cmd.ExecuteScalar()) ?? "";
+    }
+
+    public int BusyTimeout()
+    {
+        using var db = Open();
+        using var cmd = db.CreateCommand();
+        cmd.CommandText = "PRAGMA busy_timeout";
+        return Convert.ToInt32(cmd.ExecuteScalar());
+    }
+
     private SqliteConnection Open()
     {
-        var db = new SqliteConnection($"Data Source={_path}");
+        var builder = new SqliteConnectionStringBuilder
+        {
+            DataSource = _path,
+            Mode = SqliteOpenMode.ReadWriteCreate,
+            Cache = SqliteCacheMode.Shared,
+        };
+        var db = new SqliteConnection(builder.ConnectionString);
         db.Open();
+        using var pragma = db.CreateCommand();
+        pragma.CommandText = "PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;";
+        pragma.ExecuteNonQuery();
         return db;
     }
 

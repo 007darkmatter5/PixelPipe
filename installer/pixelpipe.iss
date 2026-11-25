@@ -1,7 +1,7 @@
 ; PixelPipe Windows installer. Build it with scripts\build-windows.ps1.
 
 #define MyAppName "PixelPipe"
-#define MyAppVersion "0.3.1"
+#define MyAppVersion "0.3.2"
 #define MyAppPublisher "PixelPipe"
 
 [Setup]
@@ -9,13 +9,16 @@ AppId={{B7E1C4A2-9D55-4F0E-8A61-3C2D9E7F4A18}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
-VersionInfoVersion=0.3.1.0
-VersionInfoProductVersion=0.3.1
+VersionInfoVersion=0.3.2.0
+VersionInfoProductVersion=0.3.2
 DefaultDirName={autopf}\PixelPipe
 DefaultGroupName=PixelPipe
 DisableProgramGroupPage=yes
 UsePreviousTasks=yes
+; Restart Manager closes programs that have PixelPipe files open, then PrepareToInstall
+; stops anything still running so avcodec-60.dll can be replaced.
 CloseApplications=force
+CloseApplicationsFilter=*.exe,*.dll,*
 RestartApplications=no
 OutputDir=..\dist
 OutputBaseFilename=PixelPipe-Setup-{#MyAppVersion}
@@ -25,6 +28,9 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=admin
 WizardStyle=modern
+
+[Dirs]
+Name: "{commonappdata}\PixelPipe"; Permissions: users-modify; Flags: uninsneveruninstall
 
 [Files]
 Source: "..\dist\windows\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -55,6 +61,56 @@ Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=
 var
   RomsPage: TWizardPage;
   RomsEdit: TNewEdit;
+  TrayWasRunning: Boolean;
+
+function ImageRunning(const Image: String): Boolean;
+var
+  Code: Integer;
+begin
+  Code := 1;
+  Exec(ExpandConstant('{cmd}'),
+    '/C tasklist /FI "IMAGENAME eq ' + Image + '" | find /I "' + Image + '"',
+    '', SW_HIDE, ewWaitUntilTerminated, Code);
+  Result := Code = 0;
+end;
+
+procedure ForceStop(const Image: String);
+var
+  Code: Integer;
+begin
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /T /IM ' + Image, '', SW_HIDE, ewWaitUntilTerminated, Code);
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  I: Integer;
+  DataDir, QuitFile: String;
+begin
+  DataDir := ExpandConstant('{commonappdata}\PixelPipe');
+  ForceDirectories(DataDir);
+  QuitFile := DataDir + '\quit.request';
+  TrayWasRunning := ImageRunning('PixelPipe.Tray.exe');
+  SaveStringToFile(QuitFile, 'quit', False);
+  Sleep(2500);
+  Exec(ExpandConstant('{sys}\sc.exe'), 'stop PixelPipe', '', SW_HIDE, ewWaitUntilTerminated, I);
+  Sleep(1000);
+  for I := 1 to 20 do
+  begin
+    if (not ImageRunning('PixelPipe.Tray.exe')) and
+       (not ImageRunning('PixelPipe.Web.exe')) and
+       (not ImageRunning('pixelpipe-engine.exe')) then
+      Break;
+    ForceStop('PixelPipe.Tray.exe');
+    ForceStop('PixelPipe.Web.exe');
+    ForceStop('pixelpipe-engine.exe');
+    Sleep(400);
+  end;
+  DeleteFile(QuitFile);
+  if ImageRunning('PixelPipe.Tray.exe') or ImageRunning('PixelPipe.Web.exe') or ImageRunning('pixelpipe-engine.exe') then
+    Result := 'PixelPipe is still running, so its files cannot be replaced. Quit it from the tray and run Setup again.'
+  else
+    Result := '';
+end;
 
 { CreateInputDirPage refuses a missing folder and offers to create it.
   A blank path and a UNC share such as \\unas-pro\roms must both be allowed,
@@ -207,12 +263,16 @@ begin
     Exec(ExpandConstant('{sys}\netsh.exe'), 'advfirewall firewall add rule name="PixelPipe WebRTC" dir=in action=allow protocol=UDP localport=50000-50100', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   end;
 
+  Exec(ExpandConstant('{sys}\icacls.exe'),
+    '"' + ConfigDir + '" /grant *S-1-5-32-545:(OI)(CI)M /T /C',
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+
   if WizardIsTaskSelected('service') then
   begin
     Exec(App + '\pixelpipe-engine.exe', '--install-service', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
     Exec(ExpandConstant('{sys}\sc.exe'), 'start PixelPipe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   end
-  else if WizardIsTaskSelected('startup') and WizardSilent then
+  else if TrayWasRunning or (WizardIsTaskSelected('startup') and WizardSilent) then
   begin
     { Interactive installs use the finish-page checkbox, which starts the tray. }
     Exec(App + '\PixelPipe.Tray.exe', '', '', SW_HIDE, ewNoWait, ResultCode);

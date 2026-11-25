@@ -33,6 +33,18 @@ NVENC on a real NVIDIA GPU, and this installer on a real Windows 11 desktop, sti
 SHA256 is in PixelPipe-Setup.exe.sha256.
 "@
 }
+elseif ($tag -eq 'v0.3.2-preview') {
+    $title = 'PixelPipe 0.3.2 preview (Windows)'
+    $notes = @"
+Setup stops the tray, the Windows service, and any leftover PixelPipe processes before it replaces files, then starts the tray again if it was running. Installing over a running 0.3.1 no longer fails with Access is denied on avcodec-60.dll.
+
+The accounts database stays in %ProgramData%\PixelPipe, and Users can modify that folder. Reset admin password asks Windows for permission and reports a readable error instead of crashing. Password forms still ask you to confirm the new password.
+
+The download is PixelPipe-Setup-0.3.2.exe. Installing it over an existing copy keeps config.json, accounts, and saves.
+
+SHA256 is in PixelPipe-Setup-0.3.2.exe.sha256.
+"@
+}
 elseif ($tag -eq 'v0.3.1-preview') {
     $title = 'PixelPipe 0.3.1 preview (Windows)'
     $notes = @"

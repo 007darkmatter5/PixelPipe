@@ -4,7 +4,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>PixelPipe.Web</RootNamespace>
-    <Version>0.3.1</Version>
+    <Version>0.3.2</Version>
   </PropertyGroup>
   <!-- The Windows publish must not open a console. Docker keeps the console host. -->
   <PropertyGroup Condition="$(RuntimeIdentifier.StartsWith('win'))">

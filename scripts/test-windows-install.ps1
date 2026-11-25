@@ -163,6 +163,10 @@ New-Item -ItemType Directory -Force -Path $saveDir | Out-Null
 $sentinel = Join-Path $saveDir 'upgrade-keep.txt'
 Set-Content -Path $sentinel -Value 'keep' -Encoding ascii
 
+$running = @(Get-Process -Name 'PixelPipe.Tray','PixelPipe.Web','pixelpipe-engine' -ErrorAction SilentlyContinue)
+if ($running.Count -lt 1) { throw 'PixelPipe was not running before the in-place upgrade' }
+Write-Host "upgrade while running: $($running.Name -join ', ')"
+
 $upgradeLog = Join-Path $Root 'dist\install-upgrade.log'
 if (Test-Path $upgradeLog) { Remove-Item -Force $upgradeLog }
 Write-Host "upgrade in place $Setup"
@@ -180,6 +184,13 @@ $upgradeCode = Wait-SetupProcess $upgrade 300 'upgrade installer'
 if ($upgradeCode -ne 0) {
     if (Test-Path $upgradeLog) { Get-Content $upgradeLog -Tail 120 }
     throw "upgrade installer exit code $upgradeCode"
+}
+if (Test-Path $upgradeLog) {
+    $upgradeText = Get-Content $upgradeLog -Raw
+    if ($upgradeText -match 'DeleteFile failed|Access is denied') {
+        Get-Content $upgradeLog -Tail 80
+        throw 'upgrade could not replace a file that was still in use'
+    }
 }
 
 $cfg2 = Get-Content $ConfigPath -Raw | ConvertFrom-Json
