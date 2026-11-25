@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net.Http.Headers;
 using System.Security.Claims;
 using System.Threading.RateLimiting;
@@ -11,10 +12,12 @@ using PixelPipe.Web.Services;
 using Yarp.ReverseProxy.Forwarder;
 using Yarp.ReverseProxy.Transforms;
 
-if (args is ["--reset-password", var resetUser])
+if (TryParseResetArgs(args, out var resetUser, out var resetFromStdin))
 {
-    Environment.Exit(ResetPasswordCli(resetUser));
+    Environment.Exit(ResetPassword(resetUser, resetFromStdin));
 }
+
+AppPaths.EnsureDataDirectory();
 
 var builder = WebApplication.CreateBuilder(args);
 AddFileLog(builder.Logging);
@@ -385,47 +388,212 @@ static async ValueTask<object?> LocalOrSignedIn(EndpointFilterInvocationContext 
     return await next(context);
 }
 
-static int ResetPasswordCli(string username)
+static bool TryParseResetArgs(string[] args, out string? username, out bool fromStdin)
 {
-    string password;
-    string confirm;
-    if (Console.IsInputRedirected)
+    username = null;
+    fromStdin = false;
+    if (args.Length == 0 || args[0] != "--reset-password")
     {
-        password = Console.In.ReadLine() ?? "";
-        confirm = Console.In.ReadLine() ?? "";
+        return false;
     }
-    else
+
+    for (var i = 1; i < args.Length; i++)
     {
-        if (OperatingSystem.IsWindows())
+        if (args[i] == "--password-stdin")
         {
-            ResetConsole.Attach();
+            fromStdin = true;
+        }
+        else if (!args[i].StartsWith('-'))
+        {
+            username = args[i];
+        }
+        else
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static int ResetPassword(string? username, bool fromStdin)
+{
+    try
+    {
+        if (fromStdin)
+        {
+            return ResetPasswordFromStdin(username ?? "");
         }
 
-        Console.Write("New password: ");
-        password = Console.ReadLine() ?? "";
-        Console.Write("Confirm password: ");
-        confirm = Console.ReadLine() ?? "";
-    }
+        if (OperatingSystem.IsWindows() && !IsProcessAdmin())
+        {
+            try
+            {
+                RelaunchElevatedReset(username);
+                return 0;
+            }
+            catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 1223)
+            {
+                PixelPipe.Web.PasswordDialog.Tell(
+                    "Windows permission was cancelled. The password was not changed.",
+                    false);
+                return 1;
+            }
+        }
 
-    var problem = PasswordRules.Check(password, confirm);
-    if (problem is not null)
+        var collected = PixelPipe.Web.PasswordDialog.TryCollect(username, out var user, out var password);
+        if (collected is null)
+        {
+            return ResetPasswordFromConsole(username);
+        }
+
+        if (collected == false)
+        {
+            return 1;
+        }
+
+        var outcome = ApplyPasswordReset(user, password, password);
+        LogReset(outcome.Message);
+        PixelPipe.Web.PasswordDialog.Tell(outcome.Message, outcome.Code == 0);
+        return outcome.Code;
+    }
+    catch (Exception ex)
     {
-        Console.Error.WriteLine(problem);
+        var message = FriendlyResetError(ex);
+        LogReset(message);
+        PixelPipe.Web.PasswordDialog.Tell(message, false);
+        return 1;
+    }
+}
+
+static int ResetPasswordFromStdin(string username)
+{
+    if (OperatingSystem.IsWindows() && !IsProcessAdmin())
+    {
+        Console.Error.WriteLine("Run --password-stdin from an elevated process. It does not show a dialog.");
         return 1;
     }
 
+    var password = Console.In.ReadLine() ?? "";
+    var confirm = Console.In.ReadLine() ?? "";
+    var outcome = ApplyPasswordReset(username, password, confirm);
+    LogReset(outcome.Message);
+    if (outcome.Code == 0)
+    {
+        Console.WriteLine(outcome.Message);
+    }
+    else
+    {
+        Console.Error.WriteLine(outcome.Message);
+    }
+
+    return outcome.Code;
+}
+
+static int ResetPasswordFromConsole(string? username)
+{
+    ResetConsole.Bind();
+    var user = username ?? "";
+    if (string.IsNullOrWhiteSpace(user))
+    {
+        Console.Write("Username: ");
+        user = Console.ReadLine() ?? "";
+    }
+
+    Console.Write("New password: ");
+    var password = Console.ReadLine() ?? "";
+    Console.Write("Confirm password: ");
+    var confirm = Console.ReadLine() ?? "";
+    var outcome = ApplyPasswordReset(user.Trim(), password, confirm);
+    LogReset(outcome.Message);
+    if (outcome.Code == 0)
+    {
+        Console.WriteLine(outcome.Message);
+    }
+    else
+    {
+        Console.Error.WriteLine(outcome.Message);
+    }
+
+    return outcome.Code;
+}
+
+static (int Code, string Message) ApplyPasswordReset(string username, string password, string confirm)
+{
+    var problem = PasswordRules.Check(password, confirm);
+    if (problem is not null)
+    {
+        return (1, problem);
+    }
+
+    AppPaths.EnsureDataDirectory();
     var accounts = new AccountStore();
     var user = accounts.FindByName(username);
     if (user is null)
     {
-        Console.Error.WriteLine($"No account named {username}.");
-        return 1;
+        return (1, $"No account named {username}.");
     }
 
     accounts.SetPassword(user.Id, password);
     accounts.ClearLockout(user.Id);
-    Console.WriteLine($"Password updated for {user.Username}.");
-    return 0;
+    return (0, $"Password updated for {user.Username}.");
+}
+
+static string FriendlyResetError(Exception ex)
+{
+    if (ex is Microsoft.Data.Sqlite.SqliteException sqlite && sqlite.SqliteErrorCode == 8)
+    {
+        return "The accounts database is read-only. Reinstall PixelPipe so Users can modify %ProgramData%\\PixelPipe, then try the reset again.";
+    }
+
+    return "Could not reset the password: " + ex.Message;
+}
+
+static bool IsProcessAdmin()
+{
+    if (!OperatingSystem.IsWindows())
+    {
+        return true;
+    }
+
+    using var identity = System.Security.Principal.WindowsIdentity.GetCurrent();
+    return new System.Security.Principal.WindowsPrincipal(identity)
+        .IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
+}
+
+static void RelaunchElevatedReset(string? username)
+{
+    var arguments = "--reset-password";
+    if (!string.IsNullOrWhiteSpace(username))
+    {
+        arguments += " \"" + username.Replace("\"", "", StringComparison.Ordinal) + "\"";
+    }
+
+    Process.Start(new ProcessStartInfo
+    {
+        FileName = Environment.ProcessPath ?? "",
+        Arguments = arguments,
+        UseShellExecute = true,
+        Verb = "runas",
+    });
+}
+
+static void LogReset(string message)
+{
+    try
+    {
+        var dir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+            "PixelPipe");
+        Directory.CreateDirectory(dir);
+        File.AppendAllText(
+            Path.Combine(dir, "pixelpipe-web.log"),
+            $"{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss} reset: {message}{Environment.NewLine}");
+    }
+    catch
+    {
+        // The reset still reports the message in the dialog or on stderr.
+    }
 }
 
 static async Task SignInAsync(HttpContext http, AccountUser user, bool remember)
@@ -456,18 +624,37 @@ public partial class Program
 
 static class ResetConsole
 {
-    public static void Attach()
+    public static void Bind()
     {
-        if (!AttachConsole(-1))
+        if (!OperatingSystem.IsWindows())
         {
-            AllocConsole();
+            return;
+        }
+
+        try
+        {
+            if (!AttachConsole(-1))
+            {
+                AllocConsole();
+            }
+
+            var input = new FileStream("CONIN$", FileMode.Open, FileAccess.Read);
+            var output = new FileStream("CONOUT$", FileMode.Open, FileAccess.Write);
+            var error = new FileStream("CONOUT$", FileMode.Open, FileAccess.Write);
+            Console.SetIn(new StreamReader(input));
+            Console.SetOut(new StreamWriter(output) { AutoFlush = true });
+            Console.SetError(new StreamWriter(error) { AutoFlush = true });
+        }
+        catch
+        {
+            // A GUI build with no console still exits with a code.
         }
     }
 
-    [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool AttachConsole(int processId);
 
-    [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool AllocConsole();
 }
 

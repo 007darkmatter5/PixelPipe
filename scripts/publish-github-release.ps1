@@ -33,6 +33,22 @@ NVENC on a real NVIDIA GPU, and this installer on a real Windows 11 desktop, sti
 SHA256 is in PixelPipe-Setup.exe.sha256.
 "@
 }
+elseif ($tag -eq 'v0.3.2-preview') {
+    $title = 'PixelPipe 0.3.2 preview (Windows)'
+    $notes = @"
+Setup stops the tray, the Windows service, and any leftover PixelPipe processes before it replaces files, then starts the tray again if it was running. Installing over a running 0.3.1 no longer fails with Access is denied on avcodec-60.dll.
+
+The accounts database stays in %ProgramData%\PixelPipe, and Users can modify that folder. Reset admin password asks Windows for permission, then opens one window for the username, the new password, and confirmation. The tray item and PixelPipe.Web.exe --reset-password use that same window. It updates the account and tells you when it is done. This reset runs on the PC. It is not available through the website.
+
+If you are locked out, install this build, then on the PC open the tray menu and choose Reset admin password. Approve the permission prompt, enter the username and a new password twice, and sign in with that password. From an elevated Command Prompt the same window is:
+
+"C:\Program Files\PixelPipe\PixelPipe.Web.exe" --reset-password Darkmatter5
+
+The download is PixelPipe-Setup-0.3.2.exe. Installing it over an existing copy keeps config.json, accounts, and saves.
+
+SHA256 is in PixelPipe-Setup-0.3.2.exe.sha256.
+"@
+}
 elseif ($tag -eq 'v0.3.1-preview') {
     $title = 'PixelPipe 0.3.1 preview (Windows)'
     $notes = @"

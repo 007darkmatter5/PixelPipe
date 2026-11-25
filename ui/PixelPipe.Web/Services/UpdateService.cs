@@ -180,7 +180,7 @@ public sealed class UpdateService : BackgroundService
             .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
         if (string.IsNullOrWhiteSpace(info))
         {
-            return "0.3.1";
+            return "0.3.2";
         }
 
         var plus = info.IndexOf('+');
@@ -461,7 +461,7 @@ public sealed class UpdateService : BackgroundService
 
 public sealed record UpdateSnapshot
 {
-    public string CurrentVersion { get; init; } = "0.3.1";
+    public string CurrentVersion { get; init; } = "0.3.2";
     public string? LatestVersion { get; init; }
     public string? ReleaseNotes { get; init; }
     public string? ReleaseUrl { get; init; }
