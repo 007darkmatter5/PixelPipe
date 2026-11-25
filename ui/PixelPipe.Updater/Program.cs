@@ -1,7 +1,9 @@
 using System.Diagnostics;
 using System.Net;
+using System.Security.AccessControl;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
+using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
 using PixelPipe.UpdateCore;
@@ -359,25 +361,40 @@ sealed class UpdaterWorker : BackgroundService
         var path = Path.Combine(UpdaterLog.DataDirectory(), "updater.token");
         if (!File.Exists(path))
         {
-            var token = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
-            File.WriteAllText(path, token);
-            try
-            {
-                Process.Start(new ProcessStartInfo
-                {
-                    FileName = "icacls.exe",
-                    Arguments = $"\"{path}\" /grant *S-1-5-32-545:R /inheritance:r",
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                })?.WaitForExit(8000);
-            }
-            catch (Exception ex)
-            {
-                UpdaterLog.Write("could not set the token permissions: " + ex.Message);
-            }
+            File.WriteAllText(path, Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant());
+        }
+
+        // The previous ACL removed inherited SYSTEM access, so the service could not
+        // read the token it had just created. SYSTEM, Administrators, and Users stay.
+        try
+        {
+            ProtectToken(path);
+        }
+        catch (Exception ex)
+        {
+            UpdaterLog.Write("could not set the token permissions: " + ex.Message);
         }
 
         return File.ReadAllText(path).Trim();
+    }
+
+    private static void ProtectToken(string path)
+    {
+        var security = new FileSecurity();
+        security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+        security.AddAccessRule(new FileSystemAccessRule(
+            new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null),
+            FileSystemRights.FullControl,
+            AccessControlType.Allow));
+        security.AddAccessRule(new FileSystemAccessRule(
+            new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null),
+            FileSystemRights.FullControl,
+            AccessControlType.Allow));
+        security.AddAccessRule(new FileSystemAccessRule(
+            new SecurityIdentifier(WellKnownSidType.BuiltinUsersSid, null),
+            FileSystemRights.Read,
+            AccessControlType.Allow));
+        new FileInfo(path).SetAccessControl(security);
     }
 
     private static void ClearManualStopOnBoot()
