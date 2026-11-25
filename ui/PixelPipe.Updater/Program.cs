@@ -309,10 +309,16 @@ sealed class UpdaterWorker : BackgroundService
         {
             using var tcp = new System.Net.Sockets.TcpClient();
             var task = tcp.ConnectAsync("127.0.0.1", port);
-            return task.Wait(300) && tcp.Connected;
+            if (!task.Wait(300))
+            {
+                return false;
+            }
+
+            return task.Status == TaskStatus.RanToCompletion && tcp.Connected;
         }
-        catch
+        catch (Exception ex)
         {
+            UpdaterLog.Write($"port {port} is closed ({ex.GetBaseException().Message})");
             return false;
         }
     }

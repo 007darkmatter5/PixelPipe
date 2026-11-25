@@ -626,7 +626,12 @@ internal sealed class TrayApplication : ApplicationContext
         {
             using var tcp = new System.Net.Sockets.TcpClient();
             var task = tcp.ConnectAsync("127.0.0.1", port);
-            return task.Wait(400) && tcp.Connected;
+            if (!task.Wait(400))
+            {
+                return false;
+            }
+
+            return task.Status == TaskStatus.RanToCompletion && tcp.Connected;
         }
         catch
         {

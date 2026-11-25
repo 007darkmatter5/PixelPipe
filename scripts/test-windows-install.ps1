@@ -173,7 +173,15 @@ function Assert-UnattendedUpdate {
         }
         Start-Sleep -Seconds 3
     }
-    if (-not $back) { throw "updater did not bring 0.3.5 back without an interactive app (last version '$version')" }
+    if (-not $back) {
+        foreach ($log in @('C:\ProgramData\PixelPipe\updater.log', 'C:\ProgramData\PixelPipe\pixelpipe.log')) {
+            if (Test-Path $log) {
+                Write-Host "--- $log ---"
+                Get-Content $log -Tail 40
+            }
+        }
+        throw "updater did not bring 0.3.5 back without an interactive app (last version '$version')"
+    }
     Write-Host 'site came back from the updater service'
 
     $token = (Get-Content 'C:\ProgramData\PixelPipe\updater.token' -Raw).Trim()
