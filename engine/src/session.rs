@@ -35,6 +35,7 @@ use crate::config::Config;
 use crate::encoder::{EncoderKind, H264Encoder};
 use crate::library::{Game, Library, System};
 use crate::libretro::{Core, VideoFrame};
+use crate::play_control::{emulation_step, DisconnectWatch, EmulationStep, PeerLink};
 
 #[derive(Clone, Debug, Serialize)]
 pub struct SessionInfo {
@@ -62,6 +63,7 @@ pub struct StatsSnapshot {
     pub width: u32,
     pub height: u32,
     pub connected: bool,
+    pub paused: bool,
     pub uptime_ms: u64,
 }
 
@@ -76,6 +78,7 @@ pub struct LiveStats {
     width: AtomicU32,
     height: AtomicU32,
     connected: AtomicBool,
+    paused: AtomicBool,
     started_ms: AtomicU64,
 }
 
@@ -92,8 +95,13 @@ impl LiveStats {
             width: AtomicU32::new(0),
             height: AtomicU32::new(0),
             connected: AtomicBool::new(false),
+            paused: AtomicBool::new(false),
             started_ms: AtomicU64::new(now_ms()),
         })
+    }
+
+    pub fn set_paused(&self, paused: bool) {
+        self.paused.store(paused, Ordering::Relaxed);
     }
 
     pub fn set_connected(&self, up: bool) {
@@ -119,6 +127,7 @@ impl LiveStats {
             width: self.width.load(Ordering::Relaxed),
             height: self.height.load(Ordering::Relaxed),
             connected: self.connected.load(Ordering::Relaxed),
+            paused: self.paused.load(Ordering::Relaxed),
             uptime_ms: elapsed,
         }
     }
@@ -138,6 +147,7 @@ enum Outbound {
 enum EmuCmd {
     Save(std::sync::mpsc::Sender<anyhow::Result<Vec<u8>>>),
     Load(Vec<u8>, std::sync::mpsc::Sender<anyhow::Result<()>>),
+    Reset,
     Stop,
 }
 
@@ -154,6 +164,9 @@ pub struct ActiveSession {
     pub stats: Arc<LiveStats>,
     cmd_tx: std::sync::mpsc::Sender<EmuCmd>,
     stop: Arc<AtomicBool>,
+    paused: Arc<AtomicBool>,
+    force_idr: Arc<AtomicBool>,
+    disconnect: Arc<std::sync::Mutex<DisconnectWatch>>,
     thread: Option<std::thread::JoinHandle<()>>,
     pc: Arc<RTCPeerConnection>,
     _dc: Arc<RTCDataChannel>,
@@ -217,6 +230,31 @@ impl ActiveSession {
         rx.recv_timeout(Duration::from_secs(2))
             .context("load timed out")??;
         Ok(())
+    }
+
+    pub fn set_paused(&self, paused: bool) {
+        self.paused.store(paused, Ordering::SeqCst);
+        self.stats.set_paused(paused);
+        if !paused {
+            self.force_idr.store(true, Ordering::SeqCst);
+        }
+        tracing::info!(paused, "core pause");
+    }
+
+    pub fn reset(&self) -> anyhow::Result<()> {
+        self.cmd_tx
+            .send(EmuCmd::Reset)
+            .context("emulator is not running")?;
+        self.force_idr.store(true, Ordering::SeqCst);
+        tracing::info!("core reset");
+        Ok(())
+    }
+
+    pub fn abandoned(&self, now: Instant) -> bool {
+        self.disconnect
+            .lock()
+            .map(|watch| watch.should_end(now))
+            .unwrap_or(false)
     }
 
     pub async fn shutdown(mut self) {
@@ -286,6 +324,46 @@ impl SessionHub {
             .load_state(slot)
     }
 
+    pub async fn set_paused(&self, paused: bool) -> anyhow::Result<()> {
+        let guard = self.inner.lock().await;
+        guard
+            .as_ref()
+            .context("no active session")?
+            .set_paused(paused);
+        Ok(())
+    }
+
+    pub async fn reset(&self) -> anyhow::Result<()> {
+        let guard = self.inner.lock().await;
+        guard.as_ref().context("no active session")?.reset()
+    }
+
+    pub fn spawn_reaper(self: &Arc<Self>) {
+        let hub = Arc::downgrade(self);
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                let Some(hub) = hub.upgrade() else {
+                    break;
+                };
+                hub.reap_if_abandoned().await;
+            }
+        });
+    }
+
+    async fn reap_if_abandoned(&self) {
+        let abandoned = {
+            let guard = self.inner.lock().await;
+            guard
+                .as_ref()
+                .is_some_and(|session| session.abandoned(Instant::now()))
+        };
+        if abandoned {
+            tracing::info!("browser disconnected; saving and ending the session");
+            self.shutdown().await;
+        }
+    }
+
     pub async fn stats(&self) -> Option<(SessionInfo, StatsSnapshot)> {
         let guard = self.inner.lock().await;
         guard.as_ref().map(|s| (s.info.clone(), s.stats.snapshot()))
@@ -347,14 +425,29 @@ async fn spawn_session(
     let connected_cb = connected.clone();
     let force_cb = force_idr.clone();
     let stats_cb = stats.clone();
+    let disconnect = Arc::new(std::sync::Mutex::new(DisconnectWatch::new()));
+    let watch_cb = disconnect.clone();
     pc.on_peer_connection_state_change(Box::new(move |state| {
         let up = state == RTCPeerConnectionState::Connected;
         connected_cb.store(up, Ordering::SeqCst);
         stats_cb.set_connected(up);
+        if let Some(link) = peer_link(state) {
+            if let Ok(mut watch) = watch_cb.lock() {
+                watch.observe(link, Instant::now());
+            }
+        }
         if up {
             force_cb.store(true, Ordering::SeqCst);
         }
         tracing::info!(%state, "peer connection");
+        Box::pin(async {})
+    }));
+    let watch_close = disconnect.clone();
+    dc.on_close(Box::new(move || {
+        if let Ok(mut watch) = watch_close.lock() {
+            watch.observe(PeerLink::Closed, Instant::now());
+        }
+        tracing::info!("input channel closed");
         Box::pin(async {})
     }));
 
@@ -371,7 +464,9 @@ async fn spawn_session(
     let sram_path = progress.join("sram.bin");
     let auto_path = progress.join("auto.state");
     let initial_state = std::fs::read(crate::auth::slot_file(&progress, &request.slot)).ok();
+    let paused = Arc::new(AtomicBool::new(false));
     let thread_stop = stop.clone();
+    let thread_paused = paused.clone();
     let thread_stats = stats.clone();
     let thread_force = force_idr.clone();
     let system_dir = config.system_dir();
@@ -391,6 +486,7 @@ async fn spawn_session(
                 cmd_rx,
                 out_tx,
                 stop: thread_stop,
+                paused: thread_paused,
                 force_idr: thread_force,
                 stats: thread_stats,
                 ready_tx: Some(ready_tx),
@@ -430,6 +526,9 @@ async fn spawn_session(
         stats,
         cmd_tx,
         stop,
+        paused,
+        force_idr,
+        disconnect,
         thread: Some(thread),
         pc,
         _dc: dc,
@@ -454,6 +553,7 @@ struct EmuArgs {
     cmd_rx: std::sync::mpsc::Receiver<EmuCmd>,
     out_tx: mpsc::Sender<Outbound>,
     stop: Arc<AtomicBool>,
+    paused: Arc<AtomicBool>,
     force_idr: Arc<AtomicBool>,
     stats: Arc<LiveStats>,
     ready_tx: Option<std::sync::mpsc::Sender<Result<BootInfo, String>>>,
@@ -524,7 +624,14 @@ fn emu_loop(
                 EmuCmd::Load(bytes, tx) => {
                     let _ = tx.send(core.unserialize(&bytes));
                 }
+                EmuCmd::Reset => core.reset(),
             }
+        }
+
+        if emulation_step(args.paused.load(Ordering::Relaxed)) == EmulationStep::Hold {
+            // The core stays where it is. Video and audio are not produced.
+            precise_wait(frame_budget);
+            continue;
         }
 
         let started = Instant::now();
@@ -862,6 +969,17 @@ async fn wait_for_gathering(pc: &Arc<RTCPeerConnection>) {
         return;
     }
     let _ = tokio::time::timeout(Duration::from_millis(1500), rx).await;
+}
+
+fn peer_link(state: RTCPeerConnectionState) -> Option<PeerLink> {
+    match state {
+        RTCPeerConnectionState::Connected => Some(PeerLink::Connected),
+        RTCPeerConnectionState::Disconnected | RTCPeerConnectionState::Failed => {
+            Some(PeerLink::Dropped)
+        }
+        RTCPeerConnectionState::Closed => Some(PeerLink::Closed),
+        _ => None,
+    }
 }
 
 fn now_ms() -> u64 {

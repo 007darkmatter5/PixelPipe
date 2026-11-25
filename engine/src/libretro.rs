@@ -137,6 +137,7 @@ struct CoreFns {
     load_game: unsafe extern "C" fn(*const RetroGameInfo) -> bool,
     unload_game: unsafe extern "C" fn(),
     run: unsafe extern "C" fn(),
+    reset: unsafe extern "C" fn(),
     serialize_size: unsafe extern "C" fn() -> usize,
     serialize: unsafe extern "C" fn(*mut u8, usize) -> bool,
     unserialize: unsafe extern "C" fn(*const u8, usize) -> bool,
@@ -322,6 +323,15 @@ impl Core {
         FramePacket { frame, audio }
     }
 
+    pub fn reset(&mut self) {
+        let reset = self.fns.reset;
+        let this = self as *mut Core;
+        unsafe {
+            CTX.store(this, Ordering::SeqCst);
+            reset();
+        }
+    }
+
     pub fn serialize(&mut self) -> anyhow::Result<Vec<u8>> {
         let size_fn = self.fns.serialize_size;
         let ser = self.fns.serialize;
@@ -420,6 +430,7 @@ unsafe fn load_fns(lib: &Library) -> anyhow::Result<CoreFns> {
         load_game: *lib.get(b"retro_load_game\0")?,
         unload_game: *lib.get(b"retro_unload_game\0")?,
         run: *lib.get(b"retro_run\0")?,
+        reset: *lib.get(b"retro_reset\0")?,
         serialize_size: *lib.get(b"retro_serialize_size\0")?,
         serialize: *lib.get(b"retro_serialize\0")?,
         unserialize: *lib.get(b"retro_unserialize\0")?,

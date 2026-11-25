@@ -7,6 +7,7 @@ pub mod encoder;
 pub mod input;
 pub mod library;
 pub mod libretro;
+pub mod play_control;
 pub mod selftest;
 pub mod server;
 #[cfg(windows)]
